@@ -1,137 +1,174 @@
 # OCI Notifications to ntfy Relay
 
-This sample shows how to relay Oracle Cloud Infrastructure (OCI) Notifications
-messages to an ntfy topic by using an OCI Function.
-
-The intended path is:
+An [OCI Function](https://docs.oracle.com/en-us/iaas/Content/Functions/home.htm)
+that turns Oracle Cloud Infrastructure notifications and a few common webhooks
+into short, readable [ntfy](https://ntfy.sh) push messages.
 
 ```text
-OCI Alarm -> OCI Notifications Topic -> OCI Function -> ntfy topic
+OCI Alarm / OSMH event / Cloud Guard event -> OCI Notifications topic -> function -> ntfy
+HCP Terraform notification / Alertmanager  -> OCI API Gateway        -> function -> ntfy
 ```
 
-This relay is intentionally small:
+The relay only formats and forwards. OCI Monitoring keeps owning alarm state
+and deduplication, OCI Notifications keeps owning fan-out, and Alertmanager
+keeps owning grouping.
 
-- OCI Monitoring Alarm continues to own state changes and deduplication.
-- OCI Notifications continues to own fan-out.
-- The function only adapts the OCI Notifications payload into an ntfy publish
-  request.
+## Features
 
-## Why use a relay function?
+| Source | How it arrives | What the relay does |
+|---|---|---|
+| OCI Monitoring alarms | Notifications subscription (`ORACLE_FUNCTIONS`) | Parses the [Alarm Message Format](https://docs.oracle.com/en-us/iaas/Content/Monitoring/alarm-message-format.htm): state from `type`, plain-text `body`, `alarmMetaData[].alarmUrl` as the click link. `FIRING_TO_OK` is a recovery, `RESET` stays a warning. |
+| OS Management Hub events | Notifications subscription | Summarises the managed instance: pending updates, security errata, reboot flag. |
+| Cloud Guard problem events | Notifications subscription | Shows risk level, problem, resource and recommendation. |
+| HCP Terraform notifications | API Gateway route | Verifies `X-TFE-Notification-Signature` (HMAC-SHA512) and shows workspace, run status and links. |
+| Alertmanager webhooks | API Gateway route ending in `/alertmanager` | Verifies a bearer token and shows status, alert name, scope and runbook. |
 
-If you want to keep ntfy clients on a random topic with anonymous read access,
-OCI's direct `CUSTOM_HTTPS` notification subscription model is awkward because
-it expects an authenticated HTTPS endpoint with its own confirmation flow.
+Each message sets the ntfy `Title`, `Tags`, `Priority` and, when there is a
+next hop, `Click` header. The link is also kept in the body.
 
-Using an OCI Function keeps the alert state machine inside OCI while avoiding a
-separate external webhook relay service.
+## Security model
 
-## Prerequisites
+- A request that reaches the function through API Gateway (the Fn FDK sees
+  `Fn-Http-Request-Url`, which only HTTP-triggered invocations carry) must
+  authenticate: the `/alertmanager` route needs the bearer token, every other
+  gateway route needs a valid HCP Terraform signature. Anything else gets
+  `401` and nothing is published.
+- Only direct invocations from OCI Notifications (no `Fn-Http-Request-Url`)
+  reach the OCI alarm, OSMH and Cloud Guard formatters.
+- Every secret comes from OCI Vault through the function's resource principal.
+- Error logs carry no traceback, and Vault values in exception text are
+  replaced with `<redacted>`.
 
-Before you deploy this sample, make sure you have:
+## Configuration
 
-- an OCI tenancy with Oracle Functions enabled
-- an OCI Notifications topic
-- an OCI Vault
-- an ntfy server reachable from OCI Functions
-- a topic secret stored in OCI Vault
-- a publish token secret stored in OCI Vault
+Function configuration keys:
 
-This sample assumes the following Vault secret names by default:
+| Key | Required | Meaning |
+|---|---|---|
+| `NTFY_HOST` | yes | ntfy server host name; the relay posts to `https://<NTFY_HOST>/<topic>`. |
+| `OCI_VAULT_ID` | yes | OCID of the Vault that holds the secrets below. |
+| `NTFY_TOPIC_SECRET_NAME` | yes | Vault secret holding the ntfy topic. |
+| `NTFY_TOKEN_SECRET_NAME` | yes | Vault secret holding an ntfy token with write access to the topic. |
+| `HCP_TERRAFORM_NOTIFICATION_SECRET_NAME` | for HCP Terraform | Vault secret holding the notification HMAC token. |
+| `ALERTMANAGER_WEBHOOK_TOKEN_SECRET_NAME` | for Alertmanager | Vault secret holding the bearer token Alertmanager sends. |
+| `NTFY_CLOUDFLARE_ACCESS_CLIENT_ID_SECRET_NAME`, `NTFY_CLOUDFLARE_ACCESS_CLIENT_SECRET_SECRET_NAME` | optional, together | Vault secrets for a Cloudflare Access service token in front of ntfy. |
+| `LOG_LEVEL` | optional | `INFO` (default) or `DEBUG`. |
 
-- `ntfy-alert-topic`
-- `ntfy-function-relay-token`
+## Deploy
 
-You can change the names by overriding the function config values below.
+### 1. Get the image into your OCI Container Registry
 
-## Function config
+OCI Functions only runs images from Container Registry in the function's own
+region; creating a function from a GHCR image is rejected with
+`The image must be an OCIR image in this region's registry`. Release images are
+multi-architecture (`linux/amd64`, `linux/arm64`), so they work for
+`GENERIC_X86`, `GENERIC_ARM` and `GENERIC_X86_ARM` application shapes.
 
-Set these function configuration keys:
-
-- `NTFY_HOST`
-- `OCI_VAULT_ID`
-- `NTFY_TOPIC_SECRET_NAME`
-- `NTFY_TOKEN_SECRET_NAME`
-
-Example:
+Verify the release image, then copy it by digest:
 
 ```bash
+IMAGE=ghcr.io/ryan02i5-labs/oci-notifications-ntfy-relay
+DIGEST=sha256:...   # from the release notes or the release workflow summary
+TAG=v1.0.0
+
+gh attestation verify "oci://${IMAGE}@${DIGEST}" \
+  --repo Ryan02I5-Labs/oci-notifications-ntfy-relay \
+  --signer-workflow Ryan02I5-Labs/oci-notifications-ntfy-relay/.github/workflows/release.yml \
+  --source-ref "refs/tags/${TAG}" \
+  --deny-self-hosted-runners
+
+docker login <region-key>.ocir.io
+docker buildx imagetools create \
+  --tag "<region-key>.ocir.io/<namespace>/<repository>:${TAG}" \
+  "${IMAGE}@${DIGEST}"
+docker buildx imagetools inspect "<region-key>.ocir.io/<namespace>/<repository>:${TAG}"
+```
+
+`imagetools create` copies an image index as is
+([Docker docs](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/));
+check that the digest it reports equals `DIGEST`.
+
+You can also build the image yourself from this repository with
+`docker buildx build` or `fn build`.
+
+### 2. Create the function
+
+Create it from the OCIR image with the
+[Console, CLI or Terraform](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionscreatingfunction-task.htm),
+for example:
+
+```bash
+fn create function <app-name> oci-notifications-ntfy-relay \
+  <region-key>.ocir.io/<namespace>/<repository>:v1.0.0
 fn config function <app-name> oci-notifications-ntfy-relay NTFY_HOST ntfy.example.com
 fn config function <app-name> oci-notifications-ntfy-relay OCI_VAULT_ID <vault-ocid>
 fn config function <app-name> oci-notifications-ntfy-relay NTFY_TOPIC_SECRET_NAME ntfy-alert-topic
 fn config function <app-name> oci-notifications-ntfy-relay NTFY_TOKEN_SECRET_NAME ntfy-function-relay-token
 ```
 
-## IAM
+128 MB of memory and a 30 second timeout are enough.
 
-The function resource principal needs permission to read the two Vault secrets.
-For a function-specific dynamic group, the policy shape is:
+### 3. IAM
+
+Create a dynamic group for the function
+(`ALL {resource.type = 'fnfunc', resource.id = '<function-ocid>'}`) and grant:
 
 ```text
 Allow service FaaS to use virtual-network-family in compartment id <compartment-ocid>
 Allow service FaaS to read repos in tenancy
-Allow dynamic-group <functions-dynamic-group> to read secret-bundles in compartment id <compartment-ocid> where all {target.secret.name='ntfy-alert-topic'}
-Allow dynamic-group <functions-dynamic-group> to read secret-bundles in compartment id <compartment-ocid> where all {target.secret.name='ntfy-function-relay-token'}
+Allow dynamic-group <function-group> to read secret-bundles in compartment id <compartment-ocid> where all {target.secret.name='ntfy-alert-topic'}
+Allow dynamic-group <function-group> to read secret-bundles in compartment id <compartment-ocid> where all {target.secret.name='ntfy-function-relay-token'}
 ```
 
-## Deploy
-
-Deploy with the standard Oracle Functions workflow:
-
-```bash
-fn -v deploy --app <app-name>
-```
-
-## Subscribe OCI Notifications to the function
-
-Create an OCI Notifications subscription on your topic with:
-
-- protocol: `ORACLE_FUNCTIONS`
-- endpoint: this function
-
-Once connected, OCI Alarm notifications published into the topic will invoke
-the function, which will then publish to your ntfy topic.
-
-## ntfy expectations
-
-The function publishes to:
+Add one `read secret-bundles` statement per optional secret you configure. For
+richer OS Management Hub messages, also allow:
 
 ```text
-https://<NTFY_HOST>/<topic>
+Allow dynamic-group <function-group> to read osmh-family in compartment id <compartment-ocid>
 ```
 
-It uses:
+If you use API Gateway, give the gateway's dynamic group
+(`ALL {resource.type = 'apigateway', resource.id = '<gateway-ocid>'}`)
+`use functions-family`, as in
+[Adding a Function as an API Gateway Back End](https://docs.oracle.com/en-us/iaas/Content/APIGateway/Tasks/apigatewayusingfunctionsbackend.htm).
 
-- `Authorization: Bearer <token>`
-- `Title: ...`
-- `Tags: ...`
+### 4. Connect the sources
 
-The token therefore needs write access to the target topic.
+- **OCI Notifications:** add a subscription with protocol `ORACLE_FUNCTIONS`
+  and this function as the endpoint. Alarms, OS Management Hub events and
+  Cloud Guard events published to the topic invoke the function directly.
+- **HCP Terraform:** create an API Gateway deployment with a `POST` route whose
+  back end is this function, and use the route URL as a generic webhook
+  notification with an HMAC token equal to the Vault secret.
+- **Alertmanager:** add a `POST` route ending in `/alertmanager` and configure a
+  webhook receiver with `http_config.authorization.credentials` set to the
+  bearer token stored in Vault.
 
-## Payload behavior
+## Releases and verification
 
-The function is written to work with standard OCI Notifications message bodies,
-including alarm notifications routed through OCI Notifications.
+Publishing a GitHub Release `vX.Y.Z` runs `.github/workflows/release.yml` on
+GitHub-hosted runners. It runs the tests, pushes
+`ghcr.io/ryan02i5-labs/oci-notifications-ntfy-relay:X.Y.Z` (and `X.Y`), and
+attests the build provenance with
+[artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
+BuildKit also attaches its own provenance and an SBOM to the image index.
+Deploy by digest, not by tag.
 
-It attempts to surface:
+## Development
 
-- title / alarm display name
-- severity
-- lifecycle state
-- region
-- timestamp
-- summary/body
+```bash
+python3 -m unittest discover -s . -p 'test_func.py' -v
+docker buildx build --platform linux/amd64,linux/arm64 .
+```
 
-If the payload contains non-Latin-1 title text, the message body preserves the
-full Unicode value while the HTTP `Title` header is downgraded to a header-safe
-variant.
+Dependencies and base images are pinned and updated by Dependabot.
 
-## Scope
+## Related
 
-This sample is not:
+- The ntfy [integrations list](https://docs.ntfy.sh/integrations/) links here.
+- A minimal version of this relay is proposed as an Oracle sample in
+  [oracle-samples/oracle-functions-samples#73](https://github.com/oracle-samples/oracle-functions-samples/pull/73).
 
-- a custom alert state machine
-- a replacement for OCI Alarm deduplication
-- a full ntfy deployment stack
-- a Terraform, Argo CD, or Kubernetes reference implementation
+## License
 
-It is only the minimal relay needed to bridge OCI Notifications into ntfy.
+[Universal Permissive License v1.0](LICENSE.txt).
