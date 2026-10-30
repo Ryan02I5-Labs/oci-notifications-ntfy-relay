@@ -580,6 +580,19 @@ class FormatMessageTests(unittest.TestCase):
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")
 
+    def test_hcp_needs_attention_trigger_wins_over_planned_status(self):
+        payload = {
+            "workspace_name": "example-workspace",
+            "notifications": [{"trigger": "run:needs_attention", "run_status": "planned", "message": "Run Needs Attention"}],
+        }
+        _, _, _, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
+
+        self.assertEqual(tag, "warning")
+        self.assertEqual(priority, "4")
+
+    def test_unmapped_osmh_event_keeps_its_type(self):
+        self.assertEqual(func._osmh_event_label("com.oraclecloud.osmh.createevent.kernelcrash"), "createevent.kernelcrash")
+
     def test_alertmanager_group_keeps_first_alert_details(self):
         payload = {
             "receiver": "ntfy",

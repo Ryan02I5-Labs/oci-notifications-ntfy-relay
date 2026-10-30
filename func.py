@@ -299,7 +299,7 @@ def _osmh_event_label(event_type: str) -> str:
         "com.oraclecloud.osmh.createevent.softwareupdate.updatepackages": "Update selected packages job",
         "com.oraclecloud.osmh.createevent.softwareupdate.updatesecurity": "Update security packages job",
     }
-    return mapping.get(event_type, "OSMH event")
+    return mapping.get(event_type, _strip_prefix(event_type, "com.oraclecloud.osmh.") or "OSMH event")
 
 
 def _get_osmh_managed_instance_summary(managed_instance_id: str) -> dict[str, Any]:
@@ -749,7 +749,8 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
         return title, header_title, "\n".join(lines).strip(), "information_source", "2", ""
 
     title = _pick(workspace, "HCP Terraform notification")
-    normalized = (run_status or trigger).lower()
+    status = run_status.lower()
+    trigger_name = trigger.lower()
     display_title = f"HCP Terraform | {title}"
     if run_status:
         display_title = f"{display_title} | {run_status}"
@@ -782,15 +783,17 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
     else:
         lines.append(raw_text[:4000] if raw_text else "verification request")
 
+    # Classify on both the run status and the trigger: a run:needs_attention
+    # notification can carry a non-error status such as "planned".
     tag = "information_source"
-    if "error" in normalized:
+    if "error" in status or "error" in trigger_name:
         tag = "rotating_light"
-    elif "needs_attention" in normalized or "attention" in normalized:
+    elif "attention" in status or "attention" in trigger_name:
         tag = "warning"
-    elif "completed" in normalized or normalized in {"applied", "planned_and_finished"}:
+    elif status in {"applied", "planned_and_finished", "completed"} or (not status and "completed" in trigger_name):
         tag = "white_check_mark"
 
-    resolved = normalized in {"applied", "planned_and_finished", "completed"}
+    resolved = tag == "white_check_mark"
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), run_url
 
 
