@@ -590,6 +590,19 @@ class FormatMessageTests(unittest.TestCase):
         self.assertEqual(tag, "warning")
         self.assertEqual(priority, "4")
 
+    def test_osmh_failure_event_without_updates_is_not_a_recovery(self):
+        event = {
+            "eventType": "com.oraclecloud.osmh.createevent.reboot.rebootfailed",
+            "source": "osmh",
+            "data": {"resourceId": "ocid1.instance.oc1..example", "resourceName": "example-worker-01"},
+        }
+        summary = {"display_name": "example-worker-01", "updates_available": 0}
+        with patch.object(func, "_get_osmh_managed_instance_summary", return_value=summary):
+            _, _, _, tag, priority, _ = func._format_osmh_message(json.dumps(event))
+
+        self.assertEqual(tag, "warning")
+        self.assertEqual(priority, "4")
+
     def test_unmapped_osmh_event_keeps_its_type(self):
         self.assertEqual(func._osmh_event_label("com.oraclecloud.osmh.createevent.kernelcrash"), "createevent.kernelcrash")
 

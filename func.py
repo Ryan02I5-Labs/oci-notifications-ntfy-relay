@@ -288,18 +288,22 @@ def _is_osmh_event(raw_text: str) -> bool:
     return source.lower() == "osmh" or event_type.startswith("com.oraclecloud.osmh.")
 
 
+OSMH_EVENT_LABELS = {
+    "com.oraclecloud.osmh.refreshsoftwareonmanagedinstance": "Refresh software inventory",
+    "com.oraclecloud.osmh.createevent.exploitattempt": "Exploit attempt",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updateallpackages": "Update all packages job",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updatebugfix": "Update bugfix packages job",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updateenhancement": "Update enhancement packages job",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updateother": "Update other packages job",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updatepackages": "Update selected packages job",
+    "com.oraclecloud.osmh.createevent.softwareupdate.updatesecurity": "Update security packages job",
+}
+# Substrings that mark an OSMH event as a failure rather than routine status.
+OSMH_FAILURE_MARKERS = ("crash", "fail", "error")
+
+
 def _osmh_event_label(event_type: str) -> str:
-    mapping = {
-        "com.oraclecloud.osmh.refreshsoftwareonmanagedinstance": "Refresh software inventory",
-        "com.oraclecloud.osmh.createevent.exploitattempt": "Exploit attempt",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updateallpackages": "Update all packages job",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updatebugfix": "Update bugfix packages job",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updateenhancement": "Update enhancement packages job",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updateother": "Update other packages job",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updatepackages": "Update selected packages job",
-        "com.oraclecloud.osmh.createevent.softwareupdate.updatesecurity": "Update security packages job",
-    }
-    return mapping.get(event_type, _strip_prefix(event_type, "com.oraclecloud.osmh.") or "OSMH event")
+    return OSMH_EVENT_LABELS.get(event_type, _strip_prefix(event_type, "com.oraclecloud.osmh.") or "OSMH event")
 
 
 def _get_osmh_managed_instance_summary(managed_instance_id: str) -> dict[str, Any]:
@@ -451,7 +455,10 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
     resolved = False
     if event_type == "com.oraclecloud.osmh.createevent.exploitattempt":
         tag = "rotating_light"
-    elif total_updates == 0 and summary:
+    elif any(marker in event_type for marker in OSMH_FAILURE_MARKERS):
+        tag = "warning"
+    elif event_type in OSMH_EVENT_LABELS and total_updates == 0 and summary:
+        # Only known inventory/update events with nothing pending are a recovery.
         tag = "white_check_mark"
         resolved = True
 
