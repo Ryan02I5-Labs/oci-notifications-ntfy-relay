@@ -348,9 +348,10 @@ class FormatMessageTests(unittest.TestCase):
         calls = {}
 
         class FakeClient:
-            def __init__(self, config, signer):
+            def __init__(self, config, signer, timeout):
                 calls["config"] = config
                 calls["signer"] = signer
+                calls["timeout"] = timeout
 
             def get_managed_instance(self, managed_instance_id):
                 calls["managed_instance_id"] = managed_instance_id
@@ -405,10 +406,11 @@ class FormatMessageTests(unittest.TestCase):
         self.assertEqual(calls["managed_instance_id"], "ocid1.instance.oc1.ap-osaka-1.example")
         self.assertEqual(calls["errata_kwargs"]["classification_type"], ["SECURITY"])
         self.assertEqual(calls["package_kwargs"]["classification_type"], ["SECURITY"])
+        self.assertEqual(calls["timeout"], func.OCI_CLIENT_TIMEOUT)
 
     def test_get_osmh_managed_instance_summary_keeps_base_fields_when_optional_enrich_fails(self):
         class FakeClient:
-            def __init__(self, config, signer):
+            def __init__(self, config, signer, timeout):
                 pass
 
             def get_managed_instance(self, managed_instance_id):
@@ -549,6 +551,78 @@ class FormatMessageTests(unittest.TestCase):
 
         self.assertEqual(tag, "warning")
         self.assertEqual(priority, "4")
+
+
+    def test_formats_hcp_official_payload_status_from_notifications(self):
+        # Shape from HashiCorp's run notification payload reference.
+        payload = {
+            "payload_version": 1,
+            "notification_configuration_id": "nc-example",
+            "run_url": "https://app.terraform.io/app/example-org/example-workspace/runs/run-example",
+            "run_id": "run-example",
+            "run_message": "Queued manually",
+            "workspace_name": "example-workspace",
+            "organization_name": "example-org",
+            "notifications": [
+                {
+                    "message": "Run Applied",
+                    "trigger": "run:completed",
+                    "run_status": "applied",
+                    "run_updated_at": "2026-10-31T00:00:00.000Z",
+                    "run_updated_by": "example-user",
+                }
+            ],
+        }
+        title, _, message, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
+
+        self.assertEqual(title, "HCP Terraform | example-workspace | applied")
+        self.assertIn("status: applied", message)
+        self.assertEqual(tag, "white_check_mark")
+        self.assertEqual(priority, "2")
+
+    def test_alertmanager_group_keeps_first_alert_details(self):
+        payload = {
+            "receiver": "ntfy",
+            "status": "firing",
+            "commonLabels": {"alertname": "KubePodCrashLooping", "severity": "warning"},
+            "commonAnnotations": {},
+            "alerts": [
+                {"labels": {"namespace": "monitoring", "pod": "a-0"}, "annotations": {"summary": "a-0 is crash looping"}},
+                {"labels": {"namespace": "monitoring", "pod": "b-0"}, "annotations": {"summary": "b-0 is crash looping"}},
+            ],
+        }
+        _, _, message, _, _, _ = func._format_alertmanager_message(json.dumps(payload))
+
+        self.assertIn("a-0 is crash looping", message)
+        self.assertIn("alerts: 2", message)
+
+    def test_debug_log_level_does_not_enable_library_debug_logs(self):
+        with patch.dict(func.os.environ, {"LOG_LEVEL": "DEBUG"}):
+            logger = func._configure_logging()
+
+        self.assertEqual(logger.level, func.logging.DEBUG)
+        self.assertFalse(func.logging.getLogger("urllib3").isEnabledFor(func.logging.DEBUG))
+
+    def test_oci_clients_use_bounded_timeouts(self):
+        seen = {}
+
+        class FakeSecretsClient:
+            def __init__(self, config, signer, timeout):
+                seen["timeout"] = timeout
+
+            def get_secret_bundle_by_name(self, **kwargs):
+                content = types.SimpleNamespace(content="dmFsdWU=")
+                return types.SimpleNamespace(data=types.SimpleNamespace(secret_bundle_content=content))
+
+        fake_oci = types.SimpleNamespace(
+            auth=types.SimpleNamespace(signers=types.SimpleNamespace(get_resource_principals_signer=lambda: object())),
+            secrets=types.SimpleNamespace(SecretsClient=FakeSecretsClient),
+        )
+        with patch.object(func, "oci", fake_oci):
+            self.assertEqual(func._get_secret_value("vault", "name"), "value")
+
+        self.assertEqual(seen["timeout"], func.OCI_CLIENT_TIMEOUT)
+        self.assertLess(sum(func.OCI_CLIENT_TIMEOUT), 30)
 
 
 class HandlerTests(unittest.TestCase):

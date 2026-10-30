@@ -25,15 +25,22 @@ _LOG_LEVELS = {
 def _configure_logging() -> logging.Logger:
     level_name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
     level = _LOG_LEVELS.get(level_name, logging.INFO)
+    # LOG_LEVEL applies to the relay logger only. Library loggers stay at INFO,
+    # because urllib3 logs request paths at DEBUG and the ntfy topic is the path.
     logging.basicConfig(
-        level=level,
+        level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    return logging.getLogger("ntfy-relay")
+    logger = logging.getLogger("ntfy-relay")
+    logger.setLevel(level)
+    return logger
 
 
 LOGGER = _configure_logging()
 NotificationMessage = tuple[str, str, str, str, str, str]
+# (connect, read) timeouts for OCI SDK calls, well inside the 30 s function
+# timeout; the SDK default read timeout is 60 s.
+OCI_CLIENT_TIMEOUT = (5, 10)
 ALERTMANAGER_ROUTE_SUFFIX = "/alertmanager"
 # Alarm message types from Oracle's Alarm Message Format reference
 # (https://docs.oracle.com/en-us/iaas/Content/Monitoring/alarm-message-format.htm).
@@ -58,7 +65,7 @@ def _require_env(name: str) -> str:
 
 def _get_secret_value(vault_id: str, secret_name: str) -> str:
     signer = oci.auth.signers.get_resource_principals_signer()
-    secrets_client = oci.secrets.SecretsClient(config={}, signer=signer)
+    secrets_client = oci.secrets.SecretsClient(config={}, signer=signer, timeout=OCI_CLIENT_TIMEOUT)
     bundle = secrets_client.get_secret_bundle_by_name(
         secret_name=secret_name,
         vault_id=vault_id,
@@ -297,7 +304,7 @@ def _osmh_event_label(event_type: str) -> str:
 
 def _get_osmh_managed_instance_summary(managed_instance_id: str) -> dict[str, Any]:
     signer = oci.auth.signers.get_resource_principals_signer()
-    client = oci.os_management_hub.ManagedInstanceClient(config={}, signer=signer)
+    client = oci.os_management_hub.ManagedInstanceClient(config={}, signer=signer, timeout=OCI_CLIENT_TIMEOUT)
     managed_instance = client.get_managed_instance(managed_instance_id=managed_instance_id).data
 
     summary = {
@@ -618,6 +625,13 @@ def _verify_hcp_signature(raw_body: bytes, signature: str, token: str) -> None:
         raise RelayAuthError("invalid HCP Terraform notification signature")
 
 
+def _merged(fallback: Any, preferred: Any) -> dict[str, Any]:
+    merged = dict(fallback) if isinstance(fallback, dict) else {}
+    if isinstance(preferred, dict):
+        merged.update(preferred)
+    return merged
+
+
 def _format_alertmanager_message(raw_text: str) -> NotificationMessage:
     payload = json.loads(raw_text) if raw_text else {}
     if not isinstance(payload, dict):
@@ -628,16 +642,10 @@ def _format_alertmanager_message(raw_text: str) -> NotificationMessage:
         raise RuntimeError("missing Alertmanager alerts")
 
     first_alert = alerts[0]
-    labels = payload.get("commonLabels") if isinstance(payload.get("commonLabels"), dict) else first_alert.get("labels", {})
-    annotations = (
-        payload.get("commonAnnotations")
-        if isinstance(payload.get("commonAnnotations"), dict)
-        else first_alert.get("annotations", {})
-    )
-    if not isinstance(labels, dict):
-        labels = {}
-    if not isinstance(annotations, dict):
-        annotations = {}
+    # commonLabels / commonAnnotations hold only values shared by every alert
+    # in the group, so fall back to the first alert for anything missing.
+    labels = _merged(first_alert.get("labels"), payload.get("commonLabels"))
+    annotations = _merged(first_alert.get("annotations"), payload.get("commonAnnotations"))
 
     status = _pick(payload.get("status"), first_alert.get("status"), "firing").lower()
     severity = _pick(labels.get("severity"), "warning").lower()
@@ -688,11 +696,16 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
         raise RuntimeError("unexpected HCP Terraform webhook payload")
 
     notification = _first_notification(payload)
-    run_status = _pick_path(
-        payload,
-        ("run_status",),
-        ("run", "status"),
-        ("data", "attributes", "status"),
+    # HCP Terraform puts the run status in notifications[].run_status
+    # (https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations/workspace#run-notification-payload).
+    run_status = _pick(
+        _pick_path(notification, ("run_status",)),
+        _pick_path(
+            payload,
+            ("run_status",),
+            ("run", "status"),
+            ("data", "attributes", "status"),
+        ),
     )
     trigger = _pick(
         _pick_path(payload, ("trigger",), ("run", "trigger"), ("notification_trigger",)),
