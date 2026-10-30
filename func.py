@@ -22,15 +22,22 @@ _LOG_LEVELS = {
 }
 
 
+QUIET_LIBRARY_LOGGERS = ("urllib3", "requests", "oci", "circuitbreaker")
+
+
 def _configure_logging() -> logging.Logger:
     level_name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
     level = _LOG_LEVELS.get(level_name, logging.INFO)
-    # LOG_LEVEL applies to the relay logger only. Library loggers stay at INFO,
-    # because urllib3 logs request paths at DEBUG and the ntfy topic is the path.
+    # LOG_LEVEL applies to the relay logger only. The Fn FDK sets the root
+    # logger to DEBUG when it starts (fdk/log.py), so library loggers get an
+    # explicit level: urllib3 logs request paths at DEBUG, and the ntfy topic
+    # is the path.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    for name in QUIET_LIBRARY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
     logger = logging.getLogger("ntfy-relay")
     logger.setLevel(level)
     return logger
