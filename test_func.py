@@ -629,6 +629,19 @@ class FormatMessageTests(unittest.TestCase):
         self.assertEqual(logger.level, func.logging.DEBUG)
         self.assertFalse(func.logging.getLogger("urllib3").isEnabledFor(func.logging.DEBUG))
 
+    def test_library_debug_logs_stay_off_when_fdk_sets_root_debug(self):
+        root = func.logging.getLogger()
+        previous = root.level
+        try:
+            with patch.dict(func.os.environ, {"LOG_LEVEL": "DEBUG"}):
+                func._configure_logging()
+            # The Fn FDK does this after the function module is imported.
+            root.setLevel(func.logging.DEBUG)
+            for name in ("urllib3", "urllib3.connectionpool", "requests", "oci"):
+                self.assertFalse(func.logging.getLogger(name).isEnabledFor(func.logging.DEBUG), name)
+        finally:
+            root.setLevel(previous)
+
     def test_oci_clients_use_bounded_timeouts(self):
         seen = {}
 
