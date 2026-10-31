@@ -62,7 +62,11 @@ OCI Functions only runs images from Container Registry in the function's own
 region; creating a function from a GHCR image is rejected with
 `The image must be an OCIR image in this region's registry`. Release images are
 multi-architecture (`linux/amd64`, `linux/arm64`), so they work for
-`GENERIC_X86`, `GENERIC_ARM` and `GENERIC_X86_ARM` application shapes.
+`GENERIC_X86`, `GENERIC_ARM` and `GENERIC_X86_ARM` application shapes. On
+`GENERIC_X86_ARM` OCI Functions chooses the architecture per container by
+capacity; every structured log line carries an `architecture` field
+(`x86_64` or `aarch64`) so you can confirm the function runs on both, as
+[Oracle recommends](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsspecifyingcomputearchitectures.htm).
 
 Verify the release image, then copy it by digest:
 

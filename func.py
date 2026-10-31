@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import platform
 import unicodedata
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -53,6 +54,11 @@ ALERTMANAGER_ROUTE_SUFFIX = "/alertmanager"
 # (https://docs.oracle.com/en-us/iaas/Content/Monitoring/alarm-message-format.htm).
 ALARM_RESOLVED_TYPES = {"OK", "FIRING_TO_OK"}
 ALARM_RESET_TYPE = "RESET"
+# Machine architecture of this container (x86_64 or aarch64). On a
+# GENERIC_X86_ARM application OCI Functions picks the architecture per
+# container, and Oracle asks function owners to log it to confirm the function
+# runs on both ("Specifying the Compute Architecture on Which to Run Functions").
+RUNTIME_ARCHITECTURE = platform.machine()
 
 
 class RelayAuthError(RuntimeError):
@@ -60,6 +66,7 @@ class RelayAuthError(RuntimeError):
 
 
 def _log_json(level: int, message: str, **fields: Any) -> None:
+    fields.setdefault("architecture", RUNTIME_ARCHITECTURE)
     LOGGER.log(level, "%s %s", message, json.dumps(fields, ensure_ascii=False, sort_keys=True))
 
 
@@ -923,6 +930,7 @@ def handler(ctx, data: Optional[io.BytesIO] = None):
             "ntfy-relay handler error %s",
             json.dumps(
                 {
+                    "architecture": RUNTIME_ARCHITECTURE,
                     "error_type": type(exc).__name__,
                     "stage": stage,
                     "ntfy_host": locals().get("ntfy_host", ""),
