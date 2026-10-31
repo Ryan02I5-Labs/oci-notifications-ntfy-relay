@@ -1,8 +1,10 @@
 name: Release
 
 # Publishing a GitHub Release (tag vX.Y.Z) builds the function image for
-# linux/amd64 and linux/arm64, pushes it to GHCR and attests its build
-# provenance. Follows GitHub's "Publishing Docker images" and "Using artifact
+# linux/amd64 and linux/arm64, pushes it to GHCR, runs the pushed digest on a
+# native runner for each architecture and only then attests its build
+# provenance, so an attested release has been run on both architectures.
+# Follows GitHub's "Publishing Docker images" and "Using artifact
 # attestations" guides.
 
 on:
@@ -38,8 +40,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
+    outputs:
+      name: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,22 +89,79 @@ jobs:
           provenance: mode=max
           sbom: true
 
+  verify:
+    # Runs the pushed digest on a native runner per platform, as Oracle asks
+    # image owners to confirm a multi-architecture function on both x86 and
+    # Arm ("Specifying the Compute Architecture on Which to Run Functions").
+    name: Verify published image (${{ matrix.platform }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import the function on its architecture
+        env:
+          IMAGE: ${{ needs.publish.outputs.name }}@${{ needs.publish.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: |
+          machine="$(docker run --rm --platform "${PLATFORM}" --entrypoint python3.12 "${IMAGE}" \
+            -c 'import fdk, oci, requests, func; print(func.RUNTIME_ARCHITECTURE)')"
+          echo "runtime architecture: ${machine}"
+          [[ "${machine}" == "${EXPECTED_MACHINE}" ]]
+
+  attest:
+    name: Attest build provenance
+    needs:
+      - publish
+      - verify
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-name: ${{ steps.image.outputs.name }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-name: ${{ needs.publish.outputs.name }}
+          subject-digest: ${{ needs.publish.outputs.digest }}
           push-to-registry: true
 
       - name: Summary
         env:
-          IMAGE: ${{ steps.image.outputs.name }}
-          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ needs.publish.outputs.name }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           {
             echo "### Published ${TAG}"
             echo ""
             echo "- image: \`${IMAGE}@${DIGEST}\`"
+            echo "- ran on: \`linux/amd64\` (x86_64) and \`linux/arm64\` (aarch64) native runners"
             echo "- verify: \`gh attestation verify oci://${IMAGE}@${DIGEST} -R ${GITHUB_REPOSITORY}\`"
           } >> "$GITHUB_STEP_SUMMARY"
