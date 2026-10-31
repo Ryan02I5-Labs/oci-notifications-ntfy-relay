@@ -930,6 +930,7 @@ def handler(ctx, data: Optional[io.BytesIO] = None):
             "ntfy-relay handler error %s",
             json.dumps(
                 {
+                    "architecture": RUNTIME_ARCHITECTURE,
                     "error_type": type(exc).__name__,
                     "stage": stage,
                     "ntfy_host": locals().get("ntfy_host", ""),

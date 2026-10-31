@@ -779,6 +779,7 @@ class HandlerTests(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertNotIn("secret-topic", joined)
         self.assertIn("<redacted>", joined)
+        self.assertIn('"architecture": "%s"' % func.RUNTIME_ARCHITECTURE, joined)
 
 
 if __name__ == "__main__":
