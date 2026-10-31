@@ -67,6 +67,11 @@ multi-architecture (`linux/amd64`, `linux/arm64`), so they work for
 capacity; every structured log line carries an `architecture` field
 (`x86_64` or `aarch64`) so you can confirm the function runs on both, as
 [Oracle recommends](https://docs.oracle.com/en-us/iaas/Content/Functions/Tasks/functionsspecifyingcomputearchitectures.htm).
+CI builds and imports the function on a native `ubuntu-24.04` and
+`ubuntu-24.04-arm` runner, and the release workflow runs the pushed digest on
+both before attesting it, so an attested release has started on both
+architectures. To check the OCI Functions runtime itself, create the same
+image in a `GENERIC_X86` and a `GENERIC_ARM` application as well.
 
 Verify the release image, then copy it by digest:
 

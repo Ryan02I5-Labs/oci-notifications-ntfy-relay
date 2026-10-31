@@ -26,25 +26,47 @@ jobs:
       - name: Run unit tests
         run: python3 -m unittest discover -s . -p 'test_func.py' -v
 
-  build:
-    name: Build image (amd64, arm64)
+  smoke:
+    # Docker's "Test before push" flow on a native runner per platform (no
+    # QEMU), so each image is built and run on the architecture it targets.
+    # Oracle makes verifying both architectures the image owner's job
+    # ("Specifying the Compute Architecture on Which to Run Functions").
+    name: Smoke test image (${{ matrix.platform }})
     needs: test
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build without pushing
+      - name: Build and load
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
+          load: true
           push: false
+          tags: oci-notifications-ntfy-relay:smoke
+
+      - name: Import the function on its architecture
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: |
+          machine="$(docker run --rm --entrypoint python3.12 oci-notifications-ntfy-relay:smoke \
+            -c 'import fdk, oci, requests, func; print(func.RUNTIME_ARCHITECTURE)')"
+          echo "runtime architecture: ${machine}"
+          [[ "${machine}" == "${EXPECTED_MACHINE}" ]]
