@@ -759,6 +759,12 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(result["status_code"], 200)
         self.assertEqual(published, ["https://ntfy.example.com/secret-topic"])
 
+    def test_structured_logs_include_runtime_architecture(self):
+        with self.assertLogs("ntfy-relay", level="INFO") as logs:
+            func._log_json(func.logging.INFO, "probe", stage="test")
+        self.assertIn('"architecture": "%s"' % func.RUNTIME_ARCHITECTURE, logs.output[0])
+        self.assertTrue(func.RUNTIME_ARCHITECTURE)
+
     def test_publish_error_log_redacts_topic(self):
         def failing_post(url):
             raise RuntimeError(f"404 Client Error: Not Found for url: {url}")
