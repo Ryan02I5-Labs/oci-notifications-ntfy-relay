@@ -707,7 +707,10 @@ def _format_alertmanager_message(raw_text: str) -> NotificationMessage:
     elif severity in {"critical", "error"}:
         tag = "rotating_light"
 
-    click = generator_url or runbook_url
+    # The runbook is the operator's next step and is usually public. generatorURL
+    # comes from Prometheus --web.external-url, which defaults to the in-cluster
+    # address, so a phone cannot open it; keep it only as the fallback.
+    click = runbook_url or generator_url
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=status == "resolved"), click
 
 

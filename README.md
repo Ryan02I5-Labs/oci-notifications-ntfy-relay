@@ -24,7 +24,10 @@ keeps owning grouping.
 | Alertmanager webhooks | API Gateway route ending in `/alertmanager` | Verifies a bearer token and shows status, alert name, scope and runbook. |
 
 Each message sets the ntfy `Title`, `Tags`, `Priority` and, when there is a
-next hop, `Click` header. The link is also kept in the body.
+next hop, `Click` header. The link is also kept in the body. For Alertmanager
+the click target is the alert's `runbook_url`, falling back to `generatorURL`:
+Prometheus builds `generatorURL` from `--web.external-url`, which is usually an
+in-cluster address that a phone cannot open.
 
 ## Security model
 
