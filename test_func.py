@@ -498,7 +498,26 @@ class FormatMessageTests(unittest.TestCase):
         self.assertIn("runbook: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping", message)
         self.assertEqual(tag, "warning")
         self.assertEqual(priority, "4")
-        self.assertEqual(click, "http://kps-prometheus.monitoring:9090/graph?g0.expr=test")
+        self.assertEqual(click, "https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubepodcrashlooping")
+
+    def test_alertmanager_click_falls_back_to_generator_url_without_runbook(self):
+        payload = {
+            "status": "firing",
+            "commonLabels": {"alertname": "Watchdog", "severity": "none"},
+            "alerts": [
+                {
+                    "status": "firing",
+                    "labels": {"alertname": "Watchdog", "severity": "none"},
+                    "annotations": {"summary": "An alert that should always be firing."},
+                    "generatorURL": "http://kps-prometheus.monitoring:9090/graph?g0.expr=vector%281%29",
+                }
+            ],
+        }
+
+        _, _, message, _, _, click = func._format_alertmanager_message(json.dumps(payload))
+
+        self.assertEqual(click, "http://kps-prometheus.monitoring:9090/graph?g0.expr=vector%281%29")
+        self.assertIn("graph: http://kps-prometheus.monitoring:9090/graph?g0.expr=vector%281%29", message)
 
     # Raw alarm message from Oracle's Alarm Message Format reference
     # (https://docs.oracle.com/en-us/iaas/Content/Monitoring/alarm-message-format.htm).
