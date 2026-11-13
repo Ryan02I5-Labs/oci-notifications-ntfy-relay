@@ -18,6 +18,12 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Explicit bash runs `bash --noprofile --norc -eo pipefail {0}`; the implicit
+# default `bash -e {0}` has no pipefail.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     name: Unit tests
