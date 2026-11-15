@@ -28,6 +28,7 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -43,6 +44,7 @@ jobs:
     name: Publish image to GHCR
     needs: test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -112,6 +114,7 @@ jobs:
             runner: ubuntu-24.04-arm
             machine: aarch64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     permissions:
       packages: read
     steps:
@@ -139,6 +142,7 @@ jobs:
       - publish
       - verify
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       packages: write
       attestations: write

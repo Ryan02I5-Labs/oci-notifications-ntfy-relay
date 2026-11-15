@@ -23,6 +23,7 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,6 +51,7 @@ jobs:
             runner: ubuntu-24.04-arm
             machine: aarch64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
