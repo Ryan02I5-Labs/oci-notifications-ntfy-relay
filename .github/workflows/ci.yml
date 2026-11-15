@@ -6,8 +6,7 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -23,6 +22,8 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 5
     steps:
       - name: Check out repository
@@ -51,6 +52,8 @@ jobs:
             runner: ubuntu-24.04-arm
             machine: aarch64
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       - name: Check out repository
