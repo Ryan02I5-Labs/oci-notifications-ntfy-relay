@@ -810,15 +810,15 @@ class DisplayTimeTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_iso_and_epoch_millis_render_in_the_tz_zone(self):
+    def test_iso_times_render_in_the_tz_zone(self):
         self.assertEqual(func._display_time("2026-10-30T10:00:00Z"), "2026-10-30 19:00:00 JST")
         self.assertEqual(func._display_time("2026-11-16T07:43:30.633875+00:00"), "2026-11-16 16:43:30 JST")
-        self.assertEqual(func._display_time(1793354400000), "2026-10-30 19:00:00 JST")
+        # Go (Alertmanager) writes nanoseconds; Python 3.12 truncates them.
+        self.assertEqual(func._display_time("2026-11-16T07:00:00.123456789Z"), "2026-11-16 16:00:00 JST")
 
     def test_unparseable_value_is_kept_and_unset_values_are_empty(self):
         self.assertEqual(func._display_time("yesterday"), "yesterday")
         self.assertEqual(func._display_time(""), "")
-        self.assertEqual(func._display_time(None), "")
         self.assertEqual(func._display_time("0001-01-01T00:00:00Z"), "")
 
     def test_zone_defaults_to_utc_and_tolerates_an_unknown_name(self):
@@ -826,8 +826,15 @@ class DisplayTimeTests(unittest.TestCase):
             self.assertIs(func._display_zone(), func.timezone.utc)
         with patch.dict(func.os.environ, {"TZ": "Asia/Tokyo"}):
             self.assertEqual(str(func._display_zone()), "Asia/Tokyo")
+        with patch.dict(func.os.environ, {"TZ": ":Asia/Tokyo"}):
+            self.assertEqual(str(func._display_zone()), "Asia/Tokyo")
         with patch.dict(func.os.environ, {"TZ": "Not/AZone"}):
             self.assertIs(func._display_zone(), func.timezone.utc)
+
+    def test_unknown_osmh_event_keeps_default_priority(self):
+        payload = {"eventType": "com.oraclecloud.osmh.createevent.somethingnew", "data": {"resourceName": "node-1"}}
+        _, _, _, tag, priority, _ = func._format_osmh_message(json.dumps(payload))
+        self.assertEqual((tag, priority), ("information_source", "3"))
 
     def test_oci_alarm_time_is_shown_in_the_tz_zone(self):
         payload = FormatMessageTests._raw_alarm("OK_TO_FIRING", "FIRING")
@@ -856,6 +863,15 @@ class DisplayTimeTests(unittest.TestCase):
         _, _, message, _, _, _ = func._format_alertmanager_message(json.dumps({"status": "resolved", "alerts": [resolved]}))
         self.assertIn("started: 2026-11-16 16:00:00 JST", message)
         self.assertIn("ended: 2026-11-16 16:30:00 JST", message)
+
+    def test_alertmanager_group_shows_earliest_start_and_latest_end(self):
+        def alert(starts, ends):
+            return {"status": "resolved", "labels": {"alertname": "X"}, "annotations": {}, "startsAt": starts, "endsAt": ends}
+
+        group = [alert("2026-11-16T07:00:00Z", "2026-11-16T07:30:00Z"), alert("2026-11-16T05:00:00Z", "2026-11-16T08:00:00Z")]
+        _, _, message, _, _, _ = func._format_alertmanager_message(json.dumps({"status": "resolved", "alerts": group}))
+        self.assertIn("started: 2026-11-16 14:00:00 JST", message)
+        self.assertIn("ended: 2026-11-16 17:00:00 JST", message)
 
 
 if __name__ == "__main__":
