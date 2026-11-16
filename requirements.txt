@@ -1,5 +1,5 @@
 fdk==0.1.129
-oci==2.190.0
+oci==2.191.0
 requests==2.34.2
 # Time zone data for zoneinfo when the base image has none (TZ display, #15).
 tzdata==2026.6
