@@ -7,8 +7,10 @@ import logging
 import os
 import platform
 import unicodedata
+from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import oci
 import requests
@@ -59,6 +61,46 @@ ALARM_RESET_TYPE = "RESET"
 # container, and Oracle asks function owners to log it to confirm the function
 # runs on both ("Specifying the Compute Architecture on Which to Run Functions").
 RUNTIME_ARCHITECTURE = platform.machine()
+
+
+def _display_zone() -> Any:
+    # TZ is the POSIX variable the function configuration already sets. zoneinfo
+    # reads the system database and falls back to the pinned tzdata package
+    # (https://docs.python.org/3/library/zoneinfo.html#data-sources).
+    name = os.environ.get("TZ", "").strip()
+    if not name:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        LOGGER.warning("unknown TZ %r; showing times in UTC", name)
+        return timezone.utc
+
+
+DISPLAY_ZONE = _display_zone()
+
+
+def _display_time(value: Any) -> str:
+    """Render an ISO 8601 or epoch-millisecond time in DISPLAY_ZONE, e.g. "2026-11-16 16:43:30 JST".
+
+    A value that does not parse is returned unchanged, so an upstream format
+    change never hides the time.
+    """
+    if value is None or value == "":
+        return ""
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            moment = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+        else:
+            moment = datetime.fromisoformat(str(value).strip())
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(value)
+    if moment.year < 1971:
+        # Alertmanager sends 0001-01-01T00:00:00Z for an unset endsAt.
+        return ""
+    return moment.astimezone(DISPLAY_ZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 class RelayAuthError(RuntimeError):
@@ -209,6 +251,10 @@ def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:
         return "5"
     if tag == "warning":
         return "4"
+    if tag == "information_source":
+        # Nothing to act on: ntfy priority 2 neither sounds nor vibrates
+        # (https://docs.ntfy.sh/publish/#message-priority).
+        return "2"
     return "3"
 
 
@@ -430,7 +476,7 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         f"event: {event_label}",
     ]
     if event_time:
-        lines.append(f"time: {event_time}")
+        lines.append(f"time: {_display_time(event_time)}")
 
     os_name = _pick(str(summary.get("os_name") or ""))
     os_version = _pick(str(summary.get("os_version") or ""))
@@ -527,8 +573,8 @@ def _format_cloud_guard_message(raw_text: str) -> NotificationMessage:
         ("compartment", _pick(data.get("compartmentName"))),
         ("region", _pick(details.get("region"))),
         ("status", _pick(details.get("status"))),
-        ("first_detected", _pick(details.get("firstDetected"))),
-        ("last_detected", _pick(details.get("lastDetected"))),
+        ("first_detected", _display_time(_pick(details.get("firstDetected")))),
+        ("last_detected", _display_time(_pick(details.get("lastDetected")))),
         ("problem_id", _pick(data.get("resourceId"))),
     ):
         if value:
@@ -610,7 +656,7 @@ def _format_message(raw_text: str) -> NotificationMessage:
     if region:
         lines.append(f"region: {region}")
     if timestamp:
-        lines.append(f"time: {timestamp}")
+        lines.append(f"time: {_display_time(timestamp)}")
     if summary:
         lines.append("")
         lines.append(summary)
@@ -632,6 +678,8 @@ def _format_message(raw_text: str) -> NotificationMessage:
         tag = "warning"
     elif severity.upper() in {"CRITICAL", "ERROR"}:
         tag = "rotating_light"
+    elif severity.upper() == "INFO":
+        tag = "information_source"
 
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), click
 
@@ -688,6 +736,12 @@ def _format_alertmanager_message(raw_text: str) -> NotificationMessage:
         lines.append(f"object: {scope}")
     if alert_count != "1":
         lines.append(f"alerts: {alert_count}")
+    started = _display_time(_pick(first_alert.get("startsAt")))
+    if started:
+        lines.append(f"started: {started}")
+    ended = _display_time(_pick(first_alert.get("endsAt"))) if status == "resolved" else ""
+    if ended:
+        lines.append(f"ended: {ended}")
     if summary:
         lines.append("")
         lines.append(summary)

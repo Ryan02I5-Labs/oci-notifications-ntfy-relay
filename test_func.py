@@ -272,7 +272,8 @@ class FormatMessageTests(unittest.TestCase):
         self.assertIn("next_hop: review this managed instance in OCI OS Management Hub before scheduling maintenance.", message)
         self.assertNotIn('"eventType"', message)
         self.assertEqual(tag, "information_source")
-        self.assertEqual(priority, "3")
+        # Informational: ntfy priority 2, no sound or vibration (#15).
+        self.assertEqual(priority, "2")
         self.assertEqual(click, "")
 
     def test_formats_osmh_refresh_event_without_updates_as_check_mark(self):
@@ -799,6 +800,62 @@ class HandlerTests(unittest.TestCase):
         self.assertNotIn("secret-topic", joined)
         self.assertIn("<redacted>", joined)
         self.assertIn('"architecture": "%s"' % func.RUNTIME_ARCHITECTURE, joined)
+
+
+class DisplayTimeTests(unittest.TestCase):
+    """Times follow the TZ variable (#15)."""
+
+    def setUp(self):
+        patcher = patch.object(func, "DISPLAY_ZONE", func.ZoneInfo("Asia/Tokyo"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_iso_and_epoch_millis_render_in_the_tz_zone(self):
+        self.assertEqual(func._display_time("2026-10-30T10:00:00Z"), "2026-10-30 19:00:00 JST")
+        self.assertEqual(func._display_time("2026-11-16T07:43:30.633875+00:00"), "2026-11-16 16:43:30 JST")
+        self.assertEqual(func._display_time(1793354400000), "2026-10-30 19:00:00 JST")
+
+    def test_unparseable_value_is_kept_and_unset_values_are_empty(self):
+        self.assertEqual(func._display_time("yesterday"), "yesterday")
+        self.assertEqual(func._display_time(""), "")
+        self.assertEqual(func._display_time(None), "")
+        self.assertEqual(func._display_time("0001-01-01T00:00:00Z"), "")
+
+    def test_zone_defaults_to_utc_and_tolerates_an_unknown_name(self):
+        with patch.dict(func.os.environ, {}, clear=True):
+            self.assertIs(func._display_zone(), func.timezone.utc)
+        with patch.dict(func.os.environ, {"TZ": "Asia/Tokyo"}):
+            self.assertEqual(str(func._display_zone()), "Asia/Tokyo")
+        with patch.dict(func.os.environ, {"TZ": "Not/AZone"}):
+            self.assertIs(func._display_zone(), func.timezone.utc)
+
+    def test_oci_alarm_time_is_shown_in_the_tz_zone(self):
+        payload = FormatMessageTests._raw_alarm("OK_TO_FIRING", "FIRING")
+        _, _, message, _, _, _ = func._format_message(json.dumps(payload))
+        self.assertIn("time: 2026-10-30 19:00:00 JST", message)
+
+    def test_info_alarm_is_informational_and_silent(self):
+        payload = FormatMessageTests._raw_alarm("OK_TO_FIRING", "FIRING")
+        payload["severity"] = "INFO"
+        _, _, _, tag, priority, _ = func._format_message(json.dumps(payload))
+        self.assertEqual((tag, priority), ("information_source", "2"))
+
+    def test_alertmanager_shows_start_and_end_times(self):
+        alert = {
+            "status": "firing",
+            "labels": {"alertname": "KubePodCrashLooping", "namespace": "apps", "pod": "ntfy-0", "severity": "warning"},
+            "annotations": {"summary": "Pod is crash looping."},
+            "startsAt": "2026-11-16T07:00:00Z",
+            "endsAt": "0001-01-01T00:00:00Z",
+        }
+        _, _, message, _, _, _ = func._format_alertmanager_message(json.dumps({"status": "firing", "alerts": [alert]}))
+        self.assertIn("started: 2026-11-16 16:00:00 JST", message)
+        self.assertNotIn("ended:", message)
+
+        resolved = dict(alert, status="resolved", endsAt="2026-11-16T07:30:00Z")
+        _, _, message, _, _, _ = func._format_alertmanager_message(json.dumps({"status": "resolved", "alerts": [resolved]}))
+        self.assertIn("started: 2026-11-16 16:00:00 JST", message)
+        self.assertIn("ended: 2026-11-16 16:30:00 JST", message)
 
 
 if __name__ == "__main__":

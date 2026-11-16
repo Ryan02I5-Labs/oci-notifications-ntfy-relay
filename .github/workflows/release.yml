@@ -135,6 +135,11 @@ jobs:
             -c 'import fdk, oci, requests, func; print(func.RUNTIME_ARCHITECTURE)')"
           echo "runtime architecture: ${machine}"
           [[ "${machine}" == "${EXPECTED_MACHINE}" ]]
+          # TZ must resolve inside the image; without zone data it would fall back to UTC.
+          zone="$(docker run --rm --platform "${PLATFORM}" -e TZ=Asia/Tokyo --entrypoint python3.12 "${IMAGE}" \
+            -c 'import func; print(func.DISPLAY_ZONE)')"
+          echo "display zone: ${zone}"
+          [[ "${zone}" == "Asia/Tokyo" ]]
 
   attest:
     name: Attest build provenance
