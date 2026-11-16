@@ -530,7 +530,7 @@ class FormatMessageTests(unittest.TestCase):
             "body": "ntfy relay function returned errors.",
             "type": message_type,
             "severity": "CRITICAL",
-            "timestampEpochMillis": 1761818400000,
+            "timestampEpochMillis": 1793354400000,
             "timestamp": "2026-10-30T10:00:00Z",
             "version": "1.5",
             "alarmMetaData": [
