@@ -24,7 +24,11 @@ keeps owning grouping.
 | Alertmanager webhooks | API Gateway route ending in `/alertmanager` | Verifies a bearer token and shows status, alert name, scope and runbook. |
 
 Each message sets the ntfy `Title`, `Tags`, `Priority` and, when there is a
-next hop, `Click` header. The link is also kept in the body. For Alertmanager
+next hop, `Click` header. Priority follows the
+[ntfy priority scale](https://docs.ntfy.sh/publish/#message-priority): 5 for
+critical, 4 for warnings, 2 (silent) for recoveries and informational messages
+such as an OCI alarm with severity `INFO`. Alertmanager messages show when the
+alert started and, once resolved, when it ended. The link is also kept in the body. For Alertmanager
 the click target is the alert's `runbook_url`, falling back to `generatorURL`:
 Prometheus builds `generatorURL` from `--web.external-url`, which is usually an
 in-cluster address that a phone cannot open.
@@ -56,6 +60,7 @@ Function configuration keys:
 | `ALERTMANAGER_WEBHOOK_TOKEN_SECRET_NAME` | for Alertmanager | Vault secret holding the bearer token Alertmanager sends. |
 | `NTFY_CLOUDFLARE_ACCESS_CLIENT_ID_SECRET_NAME`, `NTFY_CLOUDFLARE_ACCESS_CLIENT_SECRET_SECRET_NAME` | optional, together | Vault secrets for a Cloudflare Access service token in front of ntfy. |
 | `LOG_LEVEL` | optional | `INFO` (default) or `DEBUG`. |
+| `TZ` | optional | IANA time zone for times in message bodies, for example `Asia/Tokyo`; times show the zone abbreviation. Unset or unknown means UTC. Zone data comes from the pinned `tzdata` package when the image has none. |
 
 ## Deploy
 

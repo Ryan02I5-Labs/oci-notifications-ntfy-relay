@@ -7,8 +7,10 @@ import logging
 import os
 import platform
 import unicodedata
+from datetime import datetime, timezone, tzinfo
 from typing import Any, Optional
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import oci
 import requests
@@ -68,6 +70,56 @@ class RelayAuthError(RuntimeError):
 def _log_json(level: int, message: str, **fields: Any) -> None:
     fields.setdefault("architecture", RUNTIME_ARCHITECTURE)
     LOGGER.log(level, "%s %s", message, json.dumps(fields, ensure_ascii=False, sort_keys=True))
+
+
+def _display_zone() -> tzinfo:
+    # TZ is the POSIX variable the function configuration already sets; a leading
+    # ":" (POSIX "implementation-defined" form) is dropped. zoneinfo reads the system
+    # database and falls back to the pinned tzdata package
+    # (https://docs.python.org/3/library/zoneinfo.html#data-sources).
+    name = os.environ.get("TZ", "").strip().removeprefix(":")
+    if not name:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        _log_json(logging.WARNING, "unknown TZ; showing times in UTC", tz=name)
+        return timezone.utc
+
+
+DISPLAY_ZONE = _display_zone()
+
+
+def _parse_time(value: str) -> Optional[datetime]:
+    """Parse an ISO 8601 time; None when it does not parse or is Go's zero time."""
+    try:
+        moment = datetime.fromisoformat(value.strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if moment.year < 1971:
+        # Alertmanager sends 0001-01-01T00:00:00Z for an unset endsAt.
+        return None
+    return moment
+
+
+def _display_time(value: str) -> str:
+    """Render an ISO 8601 time in DISPLAY_ZONE, e.g. "2026-11-16 16:43:30 JST".
+
+    A value that does not parse is returned unchanged, so an upstream format
+    change never hides the time; Go's zero time and "" render as "".
+    """
+    if not value:
+        return ""
+    moment = _parse_time(value)
+    if moment is None:
+        return "" if value.strip().startswith("0001-01-01") else value
+    return _format_time(moment)
+
+
+def _format_time(moment: datetime) -> str:
+    return moment.astimezone(DISPLAY_ZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def _require_env(name: str) -> str:
@@ -209,6 +261,10 @@ def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:
         return "5"
     if tag == "warning":
         return "4"
+    if tag == "information_source":
+        # Nothing to act on: ntfy priority 2 neither sounds nor vibrates
+        # (https://docs.ntfy.sh/publish/#message-priority).
+        return "2"
     return "3"
 
 
@@ -430,7 +486,7 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         f"event: {event_label}",
     ]
     if event_time:
-        lines.append(f"time: {event_time}")
+        lines.append(f"time: {_display_time(event_time)}")
 
     os_name = _pick(str(summary.get("os_name") or ""))
     os_version = _pick(str(summary.get("os_version") or ""))
@@ -476,7 +532,12 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         tag = "white_check_mark"
         resolved = True
 
-    return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), ""
+    priority = _priority_for_tag(tag, resolved=resolved)
+    if tag == "information_source" and event_type not in OSMH_EVENT_LABELS:
+        # An event type this relay does not know yet keeps the default priority
+        # instead of going silent with the routine ones.
+        priority = "3"
+    return display_title, header_title, "\n".join(lines).strip(), tag, priority, ""
 
 
 def _is_cloud_guard_event(raw_text: str) -> bool:
@@ -527,8 +588,8 @@ def _format_cloud_guard_message(raw_text: str) -> NotificationMessage:
         ("compartment", _pick(data.get("compartmentName"))),
         ("region", _pick(details.get("region"))),
         ("status", _pick(details.get("status"))),
-        ("first_detected", _pick(details.get("firstDetected"))),
-        ("last_detected", _pick(details.get("lastDetected"))),
+        ("first_detected", _display_time(_pick(details.get("firstDetected")))),
+        ("last_detected", _display_time(_pick(details.get("lastDetected")))),
         ("problem_id", _pick(data.get("resourceId"))),
     ):
         if value:
@@ -610,7 +671,7 @@ def _format_message(raw_text: str) -> NotificationMessage:
     if region:
         lines.append(f"region: {region}")
     if timestamp:
-        lines.append(f"time: {timestamp}")
+        lines.append(f"time: {_display_time(timestamp)}")
     if summary:
         lines.append("")
         lines.append(summary)
@@ -632,6 +693,8 @@ def _format_message(raw_text: str) -> NotificationMessage:
         tag = "warning"
     elif severity.upper() in {"CRITICAL", "ERROR"}:
         tag = "rotating_light"
+    elif severity.upper() == "INFO":
+        tag = "information_source"
 
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), click
 
@@ -688,6 +751,14 @@ def _format_alertmanager_message(raw_text: str) -> NotificationMessage:
         lines.append(f"object: {scope}")
     if alert_count != "1":
         lines.append(f"alerts: {alert_count}")
+    # A group can hold alerts that started at different times: show the earliest
+    # start and, once resolved, the latest end.
+    starts = [m for m in (_parse_time(_pick(a.get("startsAt"))) for a in alerts) if m]
+    if starts:
+        lines.append(f"started: {_format_time(min(starts))}")
+    ends = [m for m in (_parse_time(_pick(a.get("endsAt"))) for a in alerts) if m] if status == "resolved" else []
+    if ends:
+        lines.append(f"ended: {_format_time(max(ends))}")
     if summary:
         lines.append("")
         lines.append(summary)
