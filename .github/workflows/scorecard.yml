@@ -6,7 +6,9 @@
 name: Scorecard supply-chain security
 
 on:
-  # Branch-Protection check: https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection
+  # Re-scores after classic branch protection changes (Branch-Protection check:
+  # https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection).
+  # Ruleset changes have no event; they are picked up by the next push or schedule.
   branch_protection_rule:
   # Keeps the Maintained check current: https://github.com/ossf/scorecard/blob/main/docs/checks.md#maintained
   schedule:
@@ -15,7 +17,8 @@ on:
     branches:
       - main
 
-permissions: read-all
+# Nothing by default; the job grants exactly what it needs.
+permissions: {}
 
 jobs:
   analysis:
