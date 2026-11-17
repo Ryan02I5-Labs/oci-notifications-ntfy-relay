@@ -1,5 +1,7 @@
 # OCI Notifications to ntfy Relay
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Ryan02I5-Labs/oci-notifications-ntfy-relay/badge)](https://scorecard.dev/viewer/?uri=github.com/Ryan02I5-Labs/oci-notifications-ntfy-relay)
+
 An [OCI Function](https://docs.oracle.com/en-us/iaas/Content/Functions/home.htm)
 that turns Oracle Cloud Infrastructure notifications and a few common webhooks
 into short, readable [ntfy](https://ntfy.sh) push messages.
