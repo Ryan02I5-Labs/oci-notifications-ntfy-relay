@@ -897,5 +897,30 @@ class DisplayTimeTests(unittest.TestCase):
         self.assertIn("ended: 2026-11-16 17:00:00 JST", message)
 
 
+
+class StartupTimingTests(unittest.TestCase):
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs Linux /proc")
+    def test_process_age_is_a_small_non_negative_number(self):
+        age = func._process_age_seconds()
+        self.assertIsInstance(age, float)
+        self.assertGreaterEqual(age, 0)
+        self.assertLess(age, 3600)
+
+    def test_process_age_is_none_without_proc(self):
+        with patch("builtins.open", side_effect=OSError("no /proc")):
+            self.assertIsNone(func._process_age_seconds())
+
+    def test_module_load_logs_import_and_process_timing(self):
+        import importlib
+
+        with self.assertLogs("ntfy-relay", level="INFO") as logs:
+            importlib.reload(func)
+        line = next(entry for entry in logs.output if "relay module loaded" in entry)
+        fields = json.loads(line[line.index("{"):])
+        self.assertGreaterEqual(fields["import_seconds"], 0)
+        self.assertIn("process_age_seconds", fields)
+        self.assertIn("architecture", fields)
+
+
 if __name__ == "__main__":
     unittest.main()

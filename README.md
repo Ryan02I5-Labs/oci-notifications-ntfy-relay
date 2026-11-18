@@ -62,6 +62,11 @@ Body:   <human-readable explanation>
 - Logs record the formatter of every published message (`formatter`, such as
   `format_message` for OCI alarms), so per-source counts do not depend on the
   title wording.
+- Each container start logs `relay module loaded` with `import_seconds` and
+  `process_age_seconds` (time since the Python process started). Compared with
+  the platform's `Received function invocation request` timestamp, this splits
+  a cold start into platform provisioning, Python start-up and imports, and the
+  handler itself.
 
 ## Security model
 
