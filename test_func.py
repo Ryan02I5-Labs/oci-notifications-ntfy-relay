@@ -64,8 +64,10 @@ class FormatMessageTests(unittest.TestCase):
     def test_formats_cloud_guard_problem_detected(self):
         title, header_title, message, tag, priority, click = func._format_cloud_guard_message(json.dumps(self.CLOUD_GUARD_EVENT))
 
-        self.assertEqual(title, "OCI Cloud Guard | CRITICAL | Bucket is public")
+        self.assertEqual(title, "CRITICAL · Bucket is public")
         self.assertEqual(header_title, title)
+        lines = message.splitlines()
+        self.assertTrue(lines[1].startswith("source: OCI Cloud Guard · risk: CRITICAL · event: detected"))
         self.assertIn("resource: example-bucket", message)
         self.assertIn("resource_type: Bucket", message)
         self.assertIn("region: ap-osaka-1", message)
@@ -85,7 +87,7 @@ class FormatMessageTests(unittest.TestCase):
         remediated = json.loads(json.dumps(self.CLOUD_GUARD_EVENT))
         remediated["eventType"] = "com.oraclecloud.cloudguard.problemremediated"
         title, _, _, tag, priority, _ = func._format_cloud_guard_message(json.dumps(remediated))
-        self.assertTrue(title.endswith("| resolved"))
+        self.assertEqual(title, "RESOLVED · Bucket is public")
         self.assertEqual((tag, priority), ("white_check_mark", "2"))
 
     def test_verifies_hcp_signature_against_exact_request_body(self):
@@ -190,14 +192,14 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, header_title, message, tag, priority, click = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(title, "HCP Terraform | example-workspace | planned_and_finished")
-        self.assertEqual(
-            header_title,
-            "HCP Terraform | example-workspace | planned_and_finished",
-        )
-        self.assertIn("status: planned_and_finished", message)
+        self.assertEqual(title, "RESOLVED · example-workspace: planned_and_finished")
+        self.assertEqual(header_title, title)
+        self.assertEqual(message.splitlines()[:2], [
+            "Manual verification run for ntfy notification wiring",
+            "source: HCP Terraform · status: planned_and_finished · trigger: run:completed"
+            " · branch: main · commit: 067da5131047",
+        ])
         self.assertIn("run_url: https://app.terraform.io/app/example-org/example-workspace/runs/run-example", message)
-        self.assertIn("commit: 067da5131047408ebf88a329b8eba5a5b373cf8b", message)
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")
         self.assertEqual(
@@ -219,11 +221,11 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, header_title, message, tag, priority, click = func._format_message(json.dumps(payload))
 
-        self.assertEqual(title, "OCI Alarm | example | server | Backup Freshness | FIRING")
-        self.assertEqual(header_title, "OCI Alarm | example | server | Backup Freshness | FIRING")
-        self.assertIn("severity: CRITICAL", message)
-        self.assertIn("state: FIRING", message)
-        self.assertIn("backup freshness alert", message)
+        self.assertEqual(title, "CRITICAL · example | server | Backup Freshness")
+        self.assertEqual(header_title, title)
+        lines = message.splitlines()
+        self.assertEqual(lines[0], "backup freshness alert")
+        self.assertTrue(lines[1].startswith("source: OCI Alarm · severity: CRITICAL · state: FIRING · time: "))
         self.assertEqual(tag, "rotating_light")
         self.assertEqual(priority, "5")
         self.assertEqual(click, "")
@@ -258,15 +260,13 @@ class FormatMessageTests(unittest.TestCase):
         ):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
-        self.assertEqual(
-            title,
-            "OCI OSMH | example-worker-01 | Refresh software inventory",
-        )
+        self.assertEqual(title, "INFO · example-worker-01: Refresh software inventory")
         self.assertEqual(header_title, title)
-        self.assertIn("source: OCI OS Management Hub", message)
-        self.assertIn("object: example-worker-01", message)
-        self.assertIn("event: Refresh software inventory", message)
-        self.assertIn("updates: 12 total, 1 security, 11 bugfix", message)
+        lines = message.splitlines()
+        self.assertEqual(lines[0], "updates: 12 total, 1 security, 11 bugfix")
+        self.assertTrue(lines[1].startswith(
+            "source: OCI OS Management Hub · object: example-worker-01 · event: Refresh software inventory · time: "))
+        self.assertTrue(lines[1].endswith(" · os: Oracle Linux Server 9 · reboot_required: no"))
         self.assertIn("security_errata: ELSA-2026-50319", message)
         self.assertIn("package_examples: kernel-uek, kernel-uek-core, ksplice-tools", message)
         self.assertIn("next_hop: review this managed instance in OCI OS Management Hub before scheduling maintenance.", message)
@@ -304,10 +304,7 @@ class FormatMessageTests(unittest.TestCase):
         ):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
-        self.assertEqual(
-            title,
-            "OCI OSMH | example-server-osa1-01 | Refresh software inventory",
-        )
+        self.assertEqual(title, "RESOLVED · example-server-osa1-01: Refresh software inventory")
         self.assertEqual(header_title, title)
         self.assertIn("updates: 0 total, 0 security", message)
         self.assertEqual(tag, "white_check_mark")
@@ -332,11 +329,9 @@ class FormatMessageTests(unittest.TestCase):
         ):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
-        self.assertEqual(
-            title,
-            "OCI OSMH | example-edge-osa1-01 | Exploit attempt",
-        )
+        self.assertEqual(title, "CRITICAL · example-edge-osa1-01: Exploit attempt")
         self.assertEqual(header_title, title)
+        self.assertEqual(message.splitlines()[0], "Exploit attempt")
         self.assertIn("event: Exploit attempt", message)
         self.assertIn("resource_id: ocid1.instance.oc1.ap-osaka-1.example", message)
         self.assertIn("next_hop: review the managed instance and investigate the related security advisory before changing packages.", message)
@@ -553,22 +548,37 @@ class FormatMessageTests(unittest.TestCase):
     def test_formats_raw_alarm_firing_with_body_and_alarm_url(self):
         title, _, message, tag, priority, click = func._format_message(json.dumps(self._raw_alarm("OK_TO_FIRING", "FIRING")))
 
-        self.assertEqual(title, "OCI Alarm | example | ntfy-relay | Relay Errors | OK_TO_FIRING")
-        self.assertIn("ntfy relay function returned errors.", message)
+        self.assertEqual(title, "CRITICAL · example | ntfy-relay | Relay Errors")
+        self.assertEqual(message.splitlines()[0], "ntfy relay function returned errors.")
+        self.assertEqual(message.splitlines()[-1], "alarm_url: https://cloud.oracle.com/monitoring/alarms/example")
         self.assertNotIn("alarmMetaData", message)
         self.assertEqual(tag, "rotating_light")
         self.assertEqual(priority, "5")
         self.assertEqual(click, "https://cloud.oracle.com/monitoring/alarms/example")
 
-    def test_formats_raw_alarm_recovery_as_resolved(self):
-        _, _, _, tag, priority, _ = func._format_message(json.dumps(self._raw_alarm("FIRING_TO_OK", "OK")))
+    def test_alarm_without_body_puts_metadata_before_raw_payload(self):
+        payload = {"title": "example | server | Disk", "body": json.dumps({"severity": "WARNING", "status": "FIRING"})}
+        _, _, message, _, _, _ = func._format_message(json.dumps(payload))
 
+        self.assertTrue(message.splitlines()[0].startswith("source: OCI Alarm · severity: WARNING"))
+
+    def test_header_title_with_middle_dot_is_latin1(self):
+        _, header_title, _, _, _, _ = func._format_message(json.dumps(self._raw_alarm("OK_TO_FIRING", "FIRING")))
+
+        header_title.encode("latin-1")
+        self.assertIn(" · ", header_title)
+
+    def test_formats_raw_alarm_recovery_as_resolved(self):
+        title, _, _, tag, priority, _ = func._format_message(json.dumps(self._raw_alarm("FIRING_TO_OK", "OK")))
+
+        self.assertEqual(title, "RESOLVED · example | ntfy-relay | Relay Errors")
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")
 
     def test_formats_raw_alarm_reset_as_warning(self):
-        _, _, _, tag, priority, _ = func._format_message(json.dumps(self._raw_alarm("RESET", "OK")))
+        title, _, _, tag, priority, _ = func._format_message(json.dumps(self._raw_alarm("RESET", "OK")))
 
+        self.assertEqual(title, "RESET · example | ntfy-relay | Relay Errors")
         self.assertEqual(tag, "warning")
         self.assertEqual(priority, "4")
 
@@ -595,7 +605,7 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, _, message, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(title, "HCP Terraform | example-workspace | applied")
+        self.assertEqual(title, "RESOLVED · example-workspace: applied")
         self.assertIn("status: applied", message)
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")
