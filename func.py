@@ -6,14 +6,18 @@ import json
 import logging
 import os
 import platform
+import time
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Optional
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import oci
-import requests
-from fdk import response
+# Cold-start diagnosis: time the third-party imports, which load most of the module.
+_IMPORT_STARTED = time.monotonic()
+
+import oci  # noqa: E402
+import requests  # noqa: E402
+from fdk import response  # noqa: E402
 
 _LOG_LEVELS = {
     "CRITICAL": logging.CRITICAL,
@@ -69,6 +73,23 @@ class RelayAuthError(RuntimeError):
 def _log_json(level: int, message: str, **fields: Any) -> None:
     fields.setdefault("architecture", RUNTIME_ARCHITECTURE)
     LOGGER.log(level, "%s %s", message, json.dumps(fields, ensure_ascii=False, sort_keys=True))
+
+
+def _process_age_seconds() -> Optional[float]:
+    """Seconds since this Python process started, or None where /proc is unavailable.
+
+    Uses the process start time (field 22 of /proc/self/stat, in clock ticks since boot)
+    and the system uptime (/proc/uptime), both documented in proc(5).
+    """
+    try:
+        with open("/proc/self/stat", encoding="ascii") as stat:
+            # Fields after the parenthesised command name start at field 3 (state).
+            start_ticks = int(stat.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/uptime", encoding="ascii") as uptime:
+            uptime_seconds = float(uptime.read().split()[0])
+        return round(uptime_seconds - start_ticks / os.sysconf("SC_CLK_TCK"), 3)
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def _display_zone() -> tzinfo:
@@ -1033,3 +1054,14 @@ def handler(ctx, data: Optional[io.BytesIO] = None):
             headers={"Content-Type": "application/json"},
             status_code=status_code,
         )
+
+
+# One line per container start. Together with the platform's "Received function invocation
+# request" timestamp it splits a cold start into platform provisioning (before the process
+# started), Python start-up and imports, and the handler itself.
+_log_json(
+    logging.INFO,
+    "relay module loaded",
+    import_seconds=round(time.monotonic() - _IMPORT_STARTED, 3),
+    process_age_seconds=_process_age_seconds(),
+)
