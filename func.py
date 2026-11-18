@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import platform
-import unicodedata
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -238,20 +237,19 @@ def _strip_prefix(value: str, prefix: str) -> str:
 
 
 def _header_safe_value(value: str, fallback: str) -> str:
+    """Return a header value that ntfy reads back unchanged.
+
+    HTTP clients send non-ASCII header text as Latin-1 bytes, which ntfy keeps
+    as invalid UTF-8. ntfy decodes RFC 2047 encoded words in headers instead
+    (https://docs.ntfy.sh/publish/#message-title, server/util.go
+    maybeDecodeHeader), so any non-ASCII value is sent as one UTF-8 base64
+    encoded word.
+    """
     candidate = value.strip() or fallback
-    try:
-        candidate.encode("latin-1")
+    if candidate.isascii():
         return candidate
-    except UnicodeEncodeError:
-        normalized = (
-            unicodedata.normalize("NFKD", candidate)
-            .encode("latin-1", "ignore")
-            .decode("latin-1")
-            .strip()
-        )
-        if normalized:
-            return normalized
-        return fallback
+    encoded = base64.b64encode(candidate.encode("utf-8")).decode("ascii")
+    return f"=?UTF-8?B?{encoded}?="
 
 
 def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:

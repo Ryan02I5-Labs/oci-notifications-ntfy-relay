@@ -5,6 +5,7 @@ import json
 import sys
 import types
 import unittest
+from email.header import decode_header
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,12 @@ MODULE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(MODULE_DIR))
 
 import func  # noqa: E402
+
+
+def decoded_header(value):
+    """Decode a header the way ntfy does (RFC 2047 encoded words)."""
+    return "".join(part.decode(charset or "ascii") if isinstance(part, bytes) else part
+                   for part, charset in decode_header(value))
 
 
 class FormatMessageTests(unittest.TestCase):
@@ -65,7 +72,7 @@ class FormatMessageTests(unittest.TestCase):
         title, header_title, message, tag, priority, click = func._format_cloud_guard_message(json.dumps(self.CLOUD_GUARD_EVENT))
 
         self.assertEqual(title, "CRITICAL · Bucket is public")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         lines = message.splitlines()
         self.assertTrue(lines[1].startswith("source: OCI Cloud Guard · risk: CRITICAL · event: detected"))
         self.assertIn("resource: example-bucket", message)
@@ -193,7 +200,7 @@ class FormatMessageTests(unittest.TestCase):
         title, header_title, message, tag, priority, click = func._format_hcp_message(json.dumps(payload))
 
         self.assertEqual(title, "RESOLVED · example-workspace: planned_and_finished")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         self.assertEqual(message.splitlines()[:2], [
             "Manual verification run for ntfy notification wiring",
             "source: HCP Terraform · status: planned_and_finished · trigger: run:completed"
@@ -222,7 +229,7 @@ class FormatMessageTests(unittest.TestCase):
         title, header_title, message, tag, priority, click = func._format_message(json.dumps(payload))
 
         self.assertEqual(title, "CRITICAL · example | server | Backup Freshness")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         lines = message.splitlines()
         self.assertEqual(lines[0], "backup freshness alert")
         self.assertTrue(lines[1].startswith("source: OCI Alarm · severity: CRITICAL · state: FIRING · time: "))
@@ -261,7 +268,7 @@ class FormatMessageTests(unittest.TestCase):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
         self.assertEqual(title, "INFO · example-worker-01: Refresh software inventory")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         lines = message.splitlines()
         self.assertEqual(lines[0], "updates: 12 total, 1 security, 11 bugfix")
         self.assertTrue(lines[1].startswith(
@@ -305,7 +312,7 @@ class FormatMessageTests(unittest.TestCase):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
         self.assertEqual(title, "RESOLVED · example-server-osa1-01: Refresh software inventory")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         self.assertIn("updates: 0 total, 0 security", message)
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")
@@ -330,7 +337,7 @@ class FormatMessageTests(unittest.TestCase):
             title, header_title, message, tag, priority, click = func._format_osmh_message(json.dumps(payload))
 
         self.assertEqual(title, "CRITICAL · example-edge-osa1-01: Exploit attempt")
-        self.assertEqual(header_title, title)
+        self.assertEqual(decoded_header(header_title), title)
         self.assertEqual(message.splitlines()[0], "Exploit attempt")
         self.assertIn("event: Exploit attempt", message)
         self.assertIn("resource_id: ocid1.instance.oc1.ap-osaka-1.example", message)
@@ -562,11 +569,17 @@ class FormatMessageTests(unittest.TestCase):
 
         self.assertTrue(message.splitlines()[0].startswith("source: OCI Alarm · severity: WARNING"))
 
-    def test_header_title_with_middle_dot_is_latin1(self):
-        _, header_title, _, _, _, _ = func._format_message(json.dumps(self._raw_alarm("OK_TO_FIRING", "FIRING")))
+    def test_non_ascii_header_title_is_an_rfc2047_encoded_word(self):
+        title, header_title, _, _, _, _ = func._format_message(json.dumps(self._raw_alarm("OK_TO_FIRING", "FIRING")))
 
-        header_title.encode("latin-1")
-        self.assertIn(" · ", header_title)
+        self.assertTrue(header_title.isascii())
+        self.assertTrue(header_title.startswith("=?UTF-8?B?"))
+        self.assertEqual(decoded_header(header_title), title)
+
+    def test_header_value_keeps_ascii_and_non_latin_text(self):
+        self.assertEqual(func._header_safe_value("HCP Terraform verification", "x"), "HCP Terraform verification")
+        self.assertEqual(decoded_header(func._header_safe_value("CRITICAL · 磁盘告警", "x")), "CRITICAL · 磁盘告警")
+        self.assertEqual(func._header_safe_value("  ", "fallback"), "fallback")
 
     def test_formats_raw_alarm_recovery_as_resolved(self):
         title, _, _, tag, priority, _ = func._format_message(json.dumps(self._raw_alarm("FIRING_TO_OK", "OK")))
