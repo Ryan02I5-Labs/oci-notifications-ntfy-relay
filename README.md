@@ -43,7 +43,7 @@ is for setups where it cannot.
 
 ### Message layout
 
-OCI alarm, OSMH, Cloud Guard and HCP Terraform run messages share one layout
+OCI alarm, OSMH, Cloud Guard and HCP Terraform messages share one layout
 so that the lock screen answers "what is wrong" first:
 
 ```text
@@ -56,6 +56,12 @@ Body:   <human-readable explanation>
 - `STATE` is `CRITICAL`, `WARNING`, `INFO` or `RESOLVED`, derived from the
   same tag that sets the priority. An OCI alarm in `RESET` says `RESET`.
   ntfy shows the tag's emoji in front of the title, so titles carry none.
+- An HCP Terraform title puts the reason before the workspace, because a phone
+  cuts long titles at the end: `WARNING · Run Needs Attention · <workspace>`.
+  The reason is HCP's own `notifications[].message`
+  ([payload reference](https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations/workspace)),
+  falling back to `run_status`. A verification request reads
+  `INFO · verification · <target>`.
 - The explanation is the alarm body, the Cloud Guard problem description, the
   HCP Terraform run message, or the OSMH update counts. When an OCI alarm has
   no body, the metadata line comes first and the raw payload follows it.
