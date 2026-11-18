@@ -35,6 +35,34 @@ the click target is the alert's `runbook_url`, falling back to `generatorURL`:
 Prometheus builds `generatorURL` from `--web.external-url`, which is usually an
 in-cluster address that a phone cannot open.
 
+Since ntfy v2.14.0 the server can render Alertmanager webhooks itself through
+[message templating](https://docs.ntfy.sh/publish/#message-templating)
+(`?template=alertmanager` or a custom template file). When Alertmanager can
+reach ntfy directly, that is the simpler path; the `/alertmanager` route here
+is for setups where it cannot.
+
+### Message layout
+
+OCI alarm, OSMH, Cloud Guard and HCP Terraform run messages share one layout
+so that the lock screen answers "what is wrong" first:
+
+```text
+Title:  <STATE> · <what is affected>
+Body:   <human-readable explanation>
+        source: <source> · <key>: <value> · ...
+        <details and links>
+```
+
+- `STATE` is `CRITICAL`, `WARNING`, `INFO` or `RESOLVED`, derived from the
+  same tag that sets the priority. An OCI alarm in `RESET` says `RESET`.
+  ntfy shows the tag's emoji in front of the title, so titles carry none.
+- The explanation is the alarm body, the Cloud Guard problem description, the
+  HCP Terraform run message, or the OSMH update counts. When an OCI alarm has
+  no body, the metadata line comes first and the raw payload follows it.
+- Logs record the formatter of every published message (`formatter`, such as
+  `format_message` for OCI alarms), so per-source counts do not depend on the
+  title wording.
+
 ## Security model
 
 - A request that reaches the function through API Gateway (the Fn FDK sees

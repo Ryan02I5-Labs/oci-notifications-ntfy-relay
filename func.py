@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import platform
-import unicodedata
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -238,20 +237,19 @@ def _strip_prefix(value: str, prefix: str) -> str:
 
 
 def _header_safe_value(value: str, fallback: str) -> str:
+    """Return a header value that ntfy reads back unchanged.
+
+    HTTP clients send non-ASCII header text as Latin-1 bytes, which ntfy keeps
+    as invalid UTF-8. ntfy decodes RFC 2047 encoded words in headers instead
+    (https://docs.ntfy.sh/publish/#message-title, server/util.go
+    maybeDecodeHeader), so any non-ASCII value is sent as one UTF-8 base64
+    encoded word.
+    """
     candidate = value.strip() or fallback
-    try:
-        candidate.encode("latin-1")
+    if candidate.isascii():
         return candidate
-    except UnicodeEncodeError:
-        normalized = (
-            unicodedata.normalize("NFKD", candidate)
-            .encode("latin-1", "ignore")
-            .decode("latin-1")
-            .strip()
-        )
-        if normalized:
-            return normalized
-        return fallback
+    encoded = base64.b64encode(candidate.encode("utf-8")).decode("ascii")
+    return f"=?UTF-8?B?{encoded}?="
 
 
 def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:
@@ -266,6 +264,32 @@ def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:
         # (https://docs.ntfy.sh/publish/#message-priority).
         return "2"
     return "3"
+
+
+# Lock-screen layout shared by every source: the title says the state and what
+# is affected, the first body line is the human-readable explanation, the
+# second compresses source and metadata into one line, and links come last.
+# ntfy shows the emoji of the first tag before the title, so titles carry none
+# (https://docs.ntfy.sh/publish/#tags-emojis).
+STATE_WORDS = {
+    "rotating_light": "CRITICAL",
+    "warning": "WARNING",
+    "white_check_mark": "RESOLVED",
+    "information_source": "INFO",
+}
+
+
+def _state_word(tag: str) -> str:
+    return STATE_WORDS.get(tag, "NOTICE")
+
+
+def _titles(state: str, what: str, fallback: str) -> tuple[str, str]:
+    display_title = f"{state} · {what}"
+    return display_title, _header_safe_value(display_title, fallback)
+
+
+def _meta_line(source: str, *fields: tuple[str, str]) -> str:
+    return " · ".join([f"source: {source}"] + [f"{name}: {value}" for name, value in fields if value])
 
 
 def _build_publish_headers(
@@ -471,8 +495,6 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
             )
 
     instance_name = _pick(summary.get("display_name"), resource_name, resource_id)
-    display_title = f"OCI OSMH | {instance_name} | {event_label}"
-    header_title = _header_safe_value(display_title, "OCI OSMH")
 
     total_updates = _coerce_int(summary.get("updates_available"))
     security_updates = _coerce_int(summary.get("security_updates_available"))
@@ -480,19 +502,9 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
     enhancement_updates = _coerce_int(summary.get("enhancement_updates_available"))
     other_updates = _coerce_int(summary.get("other_updates_available"))
 
-    lines = [
-        "source: OCI OS Management Hub",
-        f"object: {instance_name}",
-        f"event: {event_label}",
-    ]
-    if event_time:
-        lines.append(f"time: {_display_time(event_time)}")
-
     os_name = _pick(str(summary.get("os_name") or ""))
     os_version = _pick(str(summary.get("os_version") or ""))
-    if os_name or os_version:
-        lines.append(f"os: {' '.join(part for part in [os_name, os_version] if part)}")
-
+    lines = []
     if summary:
         update_parts = [f"{total_updates} total", f"{security_updates} security"]
         if bug_updates:
@@ -502,7 +514,18 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         if other_updates:
             update_parts.append(f"{other_updates} other")
         lines.append(f"updates: {', '.join(update_parts)}")
+    else:
+        lines.append(event_label)
+    lines.append(_meta_line(
+        "OCI OS Management Hub",
+        ("object", instance_name),
+        ("event", event_label),
+        ("time", _display_time(event_time) if event_time else ""),
+        ("os", " ".join(part for part in [os_name, os_version] if part)),
+        ("reboot_required", ("yes" if summary.get("reboot_required") else "no") if summary else ""),
+    ))
 
+    if summary:
         security_errata = summary.get("security_errata") if isinstance(summary.get("security_errata"), list) else []
         if security_errata:
             lines.append(f"security_errata: {', '.join(str(item) for item in security_errata[:2])}")
@@ -510,12 +533,9 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         package_examples = summary.get("package_examples") if isinstance(summary.get("package_examples"), list) else []
         if package_examples:
             lines.append(f"package_examples: {', '.join(str(item) for item in package_examples[:3])}")
-
-        lines.append(f"reboot_required: {'yes' if summary.get('reboot_required') else 'no'}")
     elif resource_id:
         lines.append(f"resource_id: {resource_id}")
 
-    lines.append("")
     if event_type == "com.oraclecloud.osmh.createevent.exploitattempt":
         lines.append("next_hop: review the managed instance and investigate the related security advisory before changing packages.")
     else:
@@ -537,6 +557,7 @@ def _format_osmh_message(raw_text: str) -> NotificationMessage:
         # An event type this relay does not know yet keeps the default priority
         # instead of going silent with the routine ones.
         priority = "3"
+    display_title, header_title = _titles(_state_word(tag), f"{instance_name}: {event_label}", "OCI OSMH")
     return display_title, header_title, "\n".join(lines).strip(), tag, priority, ""
 
 
@@ -571,22 +592,23 @@ def _format_cloud_guard_message(raw_text: str) -> NotificationMessage:
     risk = _pick(details.get("riskLevel")).upper() or "UNKNOWN"
     problem_name = _pick(data.get("resourceName"), details.get("problemType"), "problem")
 
-    display_title = f"OCI Cloud Guard | {risk} | {problem_name}"
-    if event_label != "detected":
-        display_title = f"{display_title} | {event_label}"
-    header_title = _header_safe_value(display_title, "OCI Cloud Guard")
-
+    description = _pick(details.get("problemDescription"))
+    recommendation = _pick(details.get("problemRecommendation"))
     lines = [
-        "source: OCI Cloud Guard",
-        f"problem: {problem_name}",
-        f"event: {event_label}",
-        f"risk: {risk}",
+        description or f"problem: {problem_name}",
+        _meta_line(
+            "OCI Cloud Guard",
+            ("risk", risk),
+            ("event", event_label),
+            ("resource", _pick(details.get("resourceName"))),
+            ("resource_type", _pick(details.get("resourceType"))),
+            ("region", _pick(details.get("region"))),
+        ),
     ]
+    if recommendation:
+        lines.append(f"recommendation: {recommendation}")
     for label, value in (
-        ("resource", _pick(details.get("resourceName"))),
-        ("resource_type", _pick(details.get("resourceType"))),
         ("compartment", _pick(data.get("compartmentName"))),
-        ("region", _pick(details.get("region"))),
         ("status", _pick(details.get("status"))),
         ("first_detected", _display_time(_pick(details.get("firstDetected")))),
         ("last_detected", _display_time(_pick(details.get("lastDetected")))),
@@ -594,12 +616,6 @@ def _format_cloud_guard_message(raw_text: str) -> NotificationMessage:
     ):
         if value:
             lines.append(f"{label}: {value}")
-    description = _pick(details.get("problemDescription"))
-    recommendation = _pick(details.get("problemRecommendation"))
-    if description:
-        lines.extend(["", f"description: {description}"])
-    if recommendation:
-        lines.append(f"recommendation: {recommendation}")
 
     resolved = event_label in {"dismissed", "resolved"}
     if resolved:
@@ -611,6 +627,7 @@ def _format_cloud_guard_message(raw_text: str) -> NotificationMessage:
     else:
         tag = "information_source"
 
+    display_title, header_title = _titles(_state_word(tag), problem_name, "OCI Cloud Guard")
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), ""
 
 
@@ -658,28 +675,17 @@ def _format_message(raw_text: str) -> NotificationMessage:
     )
     click = _pick(alarm_metadata.get("alarmUrl"))
     normalized_state = lifecycle.upper() if lifecycle else "EVENT"
-    display_title = f"OCI Alarm | {title}"
-    if lifecycle:
-        display_title = f"{display_title} | {normalized_state}"
-    header_title = _header_safe_value(display_title, "OCI Alarm")
-
-    lines = [f"source: OCI Alarm", f"object: {title}"]
-    if severity:
-        lines.append(f"severity: {severity}")
-    if lifecycle:
-        lines.append(f"state: {normalized_state}")
-    if region:
-        lines.append(f"region: {region}")
-    if timestamp:
-        lines.append(f"time: {_display_time(timestamp)}")
-    if summary:
-        lines.append("")
-        lines.append(summary)
-    else:
-        lines.append("")
-        lines.append(raw_text[:4000])
+    meta = _meta_line(
+        "OCI Alarm",
+        ("severity", severity),
+        ("state", normalized_state if lifecycle else ""),
+        ("region", region),
+        ("time", _display_time(timestamp) if timestamp else ""),
+    )
+    # Without a summary the raw payload is the only explanation; keep the
+    # metadata line first so the lock screen still says where it came from.
+    lines = [summary, meta] if summary else [meta, raw_text[:4000]]
     if click:
-        lines.append("")
         lines.append(f"alarm_url: {click}")
 
     tag = "warning"
@@ -696,6 +702,10 @@ def _format_message(raw_text: str) -> NotificationMessage:
     elif severity.upper() == "INFO":
         tag = "information_source"
 
+    # RESET is neither firing nor recovered (Oracle: the metric stream went
+    # missing), so the title says so instead of a severity word.
+    state_word = "RESET" if normalized_state == ALARM_RESET_TYPE else _state_word(tag)
+    display_title, header_title = _titles(state_word, title, "OCI Alarm")
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), click
 
 
@@ -846,37 +856,23 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
     title = _pick(workspace, "HCP Terraform notification")
     status = run_status.lower()
     trigger_name = trigger.lower()
-    display_title = f"HCP Terraform | {title}"
-    if run_status:
-        display_title = f"{display_title} | {run_status}"
-    header_title = _header_safe_value(display_title, "HCP Terraform notification")
 
-    lines = [
-        f"source: HCP Terraform",
-    ]
-    if organization:
-        lines.append(f"organization: {organization}")
-    if workspace:
-        lines.append(f"workspace: {workspace}")
-    if trigger:
-        lines.append(f"trigger: {trigger}")
-    if run_status:
-        lines.append(f"status: {run_status}")
-    if run_id:
-        lines.append(f"run_id: {run_id}")
-    if branch:
-        lines.append(f"branch: {branch}")
-    if commit_sha:
-        lines.append(f"commit: {commit_sha}")
-    if pull_request_url:
-        lines.append(f"pull_request: {pull_request_url}")
-    if run_url:
-        lines.append(f"run_url: {run_url}")
-    lines.append("")
-    if run_message:
-        lines.append(run_message)
-    else:
-        lines.append(raw_text[:4000] if raw_text else "verification request")
+    meta = _meta_line(
+        "HCP Terraform",
+        ("status", run_status),
+        ("trigger", trigger),
+        ("branch", branch),
+        ("commit", commit_sha[:12]),
+    )
+    lines = [run_message, meta] if run_message else [meta, raw_text[:4000] if raw_text else "verification request"]
+    for label, value in (
+        ("organization", organization),
+        ("run_id", run_id),
+        ("pull_request", pull_request_url),
+        ("run_url", run_url),
+    ):
+        if value:
+            lines.append(f"{label}: {value}")
 
     # Classify on both the run status and the trigger: a run:needs_attention
     # notification can carry a non-error status such as "planned".
@@ -889,6 +885,8 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
         tag = "white_check_mark"
 
     resolved = tag == "white_check_mark"
+    what = f"{title}: {run_status}" if run_status else title
+    display_title, header_title = _titles(_state_word(tag), what, "HCP Terraform notification")
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), run_url
 
 
@@ -948,7 +946,10 @@ def handler(ctx, data: Optional[io.BytesIO] = None):
         else:
             stage = "format_message"
             title, header_title, message, tag, priority, click = _format_message(raw_text)
-        _log_json(logging.DEBUG, "prepared ntfy relay payload", stage=stage, title=title, tag=tag, priority=priority, click=click)
+        # The formatter names the notification source in the logs, so per-source
+        # counts do not depend on the title wording.
+        formatter = stage
+        _log_json(logging.DEBUG, "prepared ntfy relay payload", stage=stage, formatter=formatter, title=title, tag=tag, priority=priority, click=click)
 
         stage = "publish_ntfy"
         publish_headers = _build_publish_headers(
@@ -971,6 +972,7 @@ def handler(ctx, data: Optional[io.BytesIO] = None):
             logging.DEBUG,
             "published ntfy relay message",
             stage=stage,
+            formatter=formatter,
             title=title,
             status_code=publish_response.status_code,
         )
