@@ -171,15 +171,13 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, header_title, message, tag, priority, click = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(title, "HCP Terraform verification")
-        self.assertEqual(
-            header_title,
-            "HCP Terraform verification | example notification",
-        )
-        self.assertNotIn("title: HCP Terraform verification", message)
-        self.assertIn("trigger: verification", message)
+        self.assertEqual(title, "INFO · verification · example notification")
+        self.assertEqual(decoded_header(header_title), title)
+        self.assertEqual(message.splitlines()[:2], [
+            "Verification of example notification",
+            "source: HCP Terraform · trigger: verification",
+        ])
         self.assertIn("notification_configuration_id: nc-8cizDrtSpBkh5cUo", message)
-        self.assertIn("message: Verification of example notification", message)
         self.assertNotIn('"payload_version"', message)
         self.assertEqual(tag, "information_source")
         self.assertEqual(priority, "2")
@@ -199,7 +197,8 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, header_title, message, tag, priority, click = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(title, "RESOLVED · example-workspace: planned_and_finished")
+        # No notifications[].message in this payload, so the run status is the reason.
+        self.assertEqual(title, "RESOLVED · planned_and_finished · example-workspace")
         self.assertEqual(decoded_header(header_title), title)
         self.assertEqual(message.splitlines()[:2], [
             "Manual verification run for ntfy notification wiring",
@@ -618,7 +617,8 @@ class FormatMessageTests(unittest.TestCase):
         }
         title, _, message, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(title, "RESOLVED · example-workspace: applied")
+        # The reason comes first, in HCP's own wording (notifications[].message).
+        self.assertEqual(title, "RESOLVED · Run Applied · example-workspace")
         self.assertIn("status: applied", message)
         self.assertEqual(tag, "white_check_mark")
         self.assertEqual(priority, "2")

@@ -857,21 +857,13 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
             notification_configuration_id,
             "notification",
         )
-        title = "HCP Terraform verification"
-        header_title = _header_safe_value(
-            f"HCP Terraform verification | {verification_target}",
-            "HCP Terraform verification",
-        )
-        lines = []
-        if organization:
-            lines.append(f"organization: {organization}")
-        if workspace:
-            lines.append(f"workspace: {workspace}")
+        title, header_title = _titles("INFO", f"verification · {verification_target}", "HCP Terraform verification")
+        lines = [
+            run_message or "HCP Terraform notification verification",
+            _meta_line("HCP Terraform", ("trigger", "verification"), ("organization", organization), ("workspace", workspace)),
+        ]
         if notification_configuration_id:
             lines.append(f"notification_configuration_id: {notification_configuration_id}")
-        lines.append("trigger: verification")
-        if run_message:
-            lines.append(f"message: {run_message}")
         return title, header_title, "\n".join(lines).strip(), "information_source", "2", ""
 
     title = _pick(workspace, "HCP Terraform notification")
@@ -906,7 +898,12 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
         tag = "white_check_mark"
 
     resolved = tag == "white_check_mark"
-    what = f"{title}: {run_status}" if run_status else title
+    # Reason before the workspace: workspace names are long and a phone cuts the title at the end.
+    # notifications[].message is HCP's human-readable reason, such as "Run Canceled"
+    # (https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations/workspace);
+    # run_status is the fallback.
+    reason = _pick(_pick_path(notification, ("message",)), run_status)
+    what = f"{reason} · {title}" if reason else title
     display_title, header_title = _titles(_state_word(tag), what, "HCP Terraform notification")
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), run_url
 
