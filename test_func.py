@@ -202,8 +202,10 @@ class FormatMessageTests(unittest.TestCase):
         self.assertEqual(decoded_header(header_title), title)
         self.assertEqual(message.splitlines()[:2], [
             "Manual verification run for ntfy notification wiring",
-            "source: HCP Terraform · status: planned_and_finished · trigger: run:completed"
-            " · branch: main · commit: 067da5131047",
+            (
+                "source: HCP Terraform · status: planned_and_finished · trigger: run:completed"
+                " · branch: main · commit: 067da5131047"
+            ),
         ])
         self.assertIn("run_url: https://app.terraform.io/app/example-org/example-workspace/runs/run-example", message)
         self.assertEqual(tag, "white_check_mark")
@@ -697,7 +699,7 @@ class FormatMessageTests(unittest.TestCase):
                 return types.SimpleNamespace(data=types.SimpleNamespace(secret_bundle_content=content))
 
         fake_oci = types.SimpleNamespace(
-            auth=types.SimpleNamespace(signers=types.SimpleNamespace(get_resource_principals_signer=lambda: object())),
+            auth=types.SimpleNamespace(signers=types.SimpleNamespace(get_resource_principals_signer=object)),
             secrets=types.SimpleNamespace(SecretsClient=FakeSecretsClient),
         )
         with patch.object(func, "oci", fake_oci):
