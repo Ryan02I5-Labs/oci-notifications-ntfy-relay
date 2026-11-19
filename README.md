@@ -1,6 +1,7 @@
 # OCI Notifications to ntfy Relay
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Ryan02I5-Labs/oci-notifications-ntfy-relay/badge)](https://scorecard.dev/viewer/?uri=github.com/Ryan02I5-Labs/oci-notifications-ntfy-relay)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16918/badge)](https://www.bestpractices.dev/projects/16918)
 
 An [OCI Function](https://docs.oracle.com/en-us/iaas/Content/Functions/home.htm)
 that turns Oracle Cloud Infrastructure notifications and a few common webhooks
@@ -220,6 +221,9 @@ docker buildx build --platform linux/amd64,linux/arm64 .
 ```
 
 Dependencies and base images are pinned and updated by Dependabot.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report issues and submit
+changes.
 
 ## Related
 
