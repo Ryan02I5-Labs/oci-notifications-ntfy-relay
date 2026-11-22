@@ -29,8 +29,9 @@ keeps owning grouping.
 Each message sets the ntfy `Title`, `Tags`, `Priority` and, when there is a
 next hop, `Click` header. Priority follows the
 [ntfy priority scale](https://docs.ntfy.sh/publish/#message-priority): 5 for
-critical, 4 for warnings, 2 (silent) for recoveries and informational messages
-such as an OCI alarm with severity `INFO`. Alertmanager messages show when the
+critical, 4 for warnings, 2 (silent) for recoveries, for HCP Terraform runs that
+wait for confirmation, and for informational messages such as an OCI alarm with
+severity `INFO`. Alertmanager messages show when the
 alert started and, once resolved, when it ended. The link is also kept in the body. For Alertmanager
 the click target is the alert's `runbook_url`, falling back to `generatorURL`:
 Prometheus builds `generatorURL` from `--web.external-url`, which is usually an
@@ -54,7 +55,7 @@ Body:   <human-readable explanation>
         <details and links>
 ```
 
-- `STATE` is `CRITICAL`, `WARNING`, `INFO` or `RESOLVED`, derived from the
+- `STATE` is `CRITICAL`, `WARNING`, `PENDING`, `INFO` or `RESOLVED`, derived from the
   same tag that sets the priority. An OCI alarm in `RESET` says `RESET`.
   ntfy shows the tag's emoji in front of the title, so titles carry none.
 - An HCP Terraform title puts the reason before the workspace, because a phone
@@ -63,6 +64,12 @@ Body:   <human-readable explanation>
   ([payload reference](https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations/workspace)),
   falling back to `run_status`. A verification request reads
   `INFO · verification · <target>`.
+- An HCP Terraform `run:needs_attention` reads
+  `PENDING · Waiting for confirmation · <workspace>` at priority 2: the run waits
+  for someone to confirm the apply or override a policy check, which is a to-do,
+  not a failure. HCP's own reason (`Cost Estimated - Needs Confirmation`) names the
+  run stage rather than what is wanted, so the first body line says what to do,
+  then the first line of the run message; the click opens the run.
 - The explanation is the alarm body, the Cloud Guard problem description, the
   HCP Terraform run message, or the OSMH update counts. When an OCI alarm has
   no body, the metadata line comes first and the raw payload follows it.

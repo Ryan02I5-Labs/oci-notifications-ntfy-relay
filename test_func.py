@@ -630,10 +630,43 @@ class FormatMessageTests(unittest.TestCase):
             "workspace_name": "example-workspace",
             "notifications": [{"trigger": "run:needs_attention", "run_status": "planned", "message": "Run Needs Attention"}],
         }
-        _, _, _, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
+        title, _, _, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
 
-        self.assertEqual(tag, "warning")
-        self.assertEqual(priority, "4")
+        self.assertEqual(title, "PENDING · Waiting for confirmation · example-workspace")
+        self.assertEqual(tag, "hourglass_flowing_sand")
+        self.assertEqual(priority, "2")
+
+    def test_hcp_needs_attention_says_what_is_wanted_first(self):
+        payload = {
+            "workspace_name": "example-workspace",
+            "run_url": "https://app.terraform.io/app/example-org/example-workspace/runs/run-example",
+            "run_message": "feat: example change (#1)\n\nLonger description that the phone does not need.",
+            "notifications": [{
+                "trigger": "run:needs_attention",
+                "run_status": "cost_estimated",
+                "message": "Cost Estimated - Needs Confirmation",
+            }],
+        }
+        title, _, message, tag, priority, click = func._format_hcp_message(json.dumps(payload))
+
+        self.assertEqual(title, "PENDING · Waiting for confirmation · example-workspace")
+        lines = message.splitlines()
+        self.assertTrue(lines[0].startswith("The run waits for confirmation"))
+        self.assertEqual(lines[1], "feat: example change (#1)")
+        self.assertTrue(lines[2].startswith("source: HCP Terraform · status: cost_estimated"))
+        self.assertNotIn("Longer description", message)
+        self.assertEqual((tag, priority), ("hourglass_flowing_sand", "2"))
+        self.assertEqual(click, payload["run_url"])
+
+    def test_hcp_errored_run_stays_critical(self):
+        payload = {
+            "workspace_name": "example-workspace",
+            "notifications": [{"trigger": "run:errored", "run_status": "errored", "message": "Run Errored"}],
+        }
+        title, _, _, tag, priority, _ = func._format_hcp_message(json.dumps(payload))
+
+        self.assertEqual(title, "CRITICAL · Run Errored · example-workspace")
+        self.assertEqual((tag, priority), ("rotating_light", "5"))
 
     def test_osmh_failure_event_without_updates_is_not_a_recovery(self):
         event = {
