@@ -280,8 +280,8 @@ def _priority_for_tag(tag: str, *, resolved: bool = False) -> str:
         return "5"
     if tag == "warning":
         return "4"
-    if tag == "information_source":
-        # Nothing to act on: ntfy priority 2 neither sounds nor vibrates
+    if tag in ("information_source", "hourglass_flowing_sand"):
+        # Nothing to act on now: ntfy priority 2 neither sounds nor vibrates
         # (https://docs.ntfy.sh/publish/#message-priority).
         return "2"
     return "3"
@@ -297,6 +297,7 @@ STATE_WORDS = {
     "warning": "WARNING",
     "white_check_mark": "RESOLVED",
     "information_source": "INFO",
+    "hourglass_flowing_sand": "PENDING",
 }
 
 
@@ -893,7 +894,17 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
     if "error" in status or "error" in trigger_name:
         tag = "rotating_light"
     elif "attention" in status or "attention" in trigger_name:
-        tag = "warning"
+        # run:needs_attention: the run waits for someone to confirm the apply or override a
+        # policy check (HCP Terraform notification triggers). Nothing failed and the run
+        # waits as long as needed, so it is a silent to-do rather than a page.
+        tag = "hourglass_flowing_sand"
+        first = run_message.splitlines()[0] if run_message else ""
+        lines = [
+            "The run waits for confirmation: confirm or discard the apply (or override the policy check) in HCP Terraform.",
+            *([first] if first else []),
+            meta,
+            *lines[2 if run_message else 1:],
+        ]
     elif status in {"applied", "planned_and_finished", "completed"} or (not status and "completed" in trigger_name):
         tag = "white_check_mark"
 
@@ -903,6 +914,10 @@ def _format_hcp_message(raw_text: str) -> NotificationMessage:
     # (https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations/workspace);
     # run_status is the fallback.
     reason = _pick(_pick_path(notification, ("message",)), run_status)
+    if tag == "hourglass_flowing_sand":
+        # HCP's own wording ("Cost Estimated - Needs Confirmation") names a run stage, not
+        # what is wanted; say it plainly and keep the workspace visible.
+        reason = "Waiting for confirmation"
     what = f"{reason} · {title}" if reason else title
     display_title, header_title = _titles(_state_word(tag), what, "HCP Terraform notification")
     return display_title, header_title, "\n".join(lines).strip(), tag, _priority_for_tag(tag, resolved=resolved), run_url
