@@ -1,4 +1,4 @@
-fdk==0.1.129
+fdk==0.1.130
 oci==2.191.0
 requests==2.34.2
 # Time zone data for zoneinfo when the base image has none (TZ display, #15).
