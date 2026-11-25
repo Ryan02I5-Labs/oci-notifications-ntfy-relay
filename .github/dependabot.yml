@@ -6,15 +6,24 @@ updates:
       interval: daily
     cooldown:
       default-days: 3
+    # The Mergify queue tests on the latest main
+    # (https://docs.mergify.com/integrations/dependabot/).
+    rebase-strategy: disabled
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: daily
     cooldown:
       default-days: 3
+    # The Mergify queue tests on the latest main
+    # (https://docs.mergify.com/integrations/dependabot/).
+    rebase-strategy: disabled
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: daily
     cooldown:
       default-days: 3
+    # The Mergify queue tests on the latest main
+    # (https://docs.mergify.com/integrations/dependabot/).
+    rebase-strategy: disabled

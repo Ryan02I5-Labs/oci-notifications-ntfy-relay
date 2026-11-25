@@ -30,6 +30,10 @@ A pull request is merged when:
 - automated code review has no unresolved findings;
 - review conversations are resolved.
 
+Maintainers then queue it with `@mergifyio queue`. The Mergify merge queue
+tests it on the latest `main` and squash-merges it, so a pull request that is
+behind `main` does not need to be updated.
+
 ## Requirements for acceptable contributions
 
 - Python 3.12, standard library first. A new dependency needs a reason in the
