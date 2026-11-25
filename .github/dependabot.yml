@@ -1,4 +1,8 @@
 version: 2
+# One PR per ecosystem: actions released together (for example the
+# github/codeql-action init, analyze and upload-sarif sub-actions) and the
+# Python dependencies of the function move as one reviewable update instead of
+# one PR each. The base image stays on its own; it changes the runtime.
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -9,6 +13,10 @@ updates:
     # GitHub's merge queue tests on the latest main, so behind branches need no rebase
     # (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#rebase-strategy--).
     rebase-strategy: disabled
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -18,6 +26,10 @@ updates:
     # GitHub's merge queue tests on the latest main, so behind branches need no rebase
     # (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#rebase-strategy--).
     rebase-strategy: disabled
+    groups:
+      python:
+        patterns:
+          - "*"
   - package-ecosystem: docker
     directory: /
     schedule:
