@@ -1,0 +1,41 @@
+# Mergify merge queue and merge protection
+# (https://docs.mergify.com/configuration/file-format/). Merge requirements live in
+# `merge_protections`; queue rules only select and merge. A pull request is queued with
+# `@mergifyio queue` once its review is done (CONTRIBUTING.md); Mergify then tests it on the
+# latest `main` and squash-merges it, so behind branches do not need updating.
+
+queue_rules:
+  # The first rule whose queue_conditions match takes the pull request
+  # (https://docs.mergify.com/merge-queue/rules/). Dependency updates are batched; a failed batch
+  # is split to find the pull request that broke it
+  # (https://docs.mergify.com/merge-queue/batches/failures/).
+  - name: dependency-updates
+    queue_conditions:
+      - base = main
+      - -draft
+      - author = dependabot[bot]
+    merge_method: squash
+    batch_size: 7
+    batch_max_wait_time: 5 min
+  - name: default
+    queue_conditions:
+      - base = main
+      - -draft
+    merge_method: squash
+
+merge_protections:
+  - name: Merge gate
+    description: >-
+      The required CI of CONTRIBUTING.md and resolved review conversations.
+    if:
+      - base = main
+    success_conditions:
+      - check-success = Unit tests
+      - check-success = Smoke test image (linux/amd64)
+      - check-success = Smoke test image (linux/arm64)
+      - "#review-threads-unresolved = 0"
+
+merge_protections_settings:
+  # The result stays the `Mergify Merge Protections` check run; the summary comment is turned off
+  # (https://docs.mergify.com/merge-protections/setup/).
+  post_comment: false
