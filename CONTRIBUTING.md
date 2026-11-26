@@ -30,9 +30,12 @@ A pull request is merged when:
 - automated code review has no unresolved findings;
 - review conversations are resolved.
 
-Maintainers then queue it with `@mergifyio queue`. The Mergify merge queue
-tests it on the latest `main` and squash-merges it, so a pull request that is
-behind `main` does not need to be updated.
+Maintainers then add it to GitHub's merge queue ("Merge when ready"). The
+queue runs the required checks on the latest `main` and squash-merges it, so a
+pull request that is behind `main` does not need to be updated.
+
+Publishing a release waits for a maintainer to approve the `release`
+environment.
 
 ## Requirements for acceptable contributions
 

@@ -6,8 +6,8 @@ updates:
       interval: daily
     cooldown:
       default-days: 3
-    # The Mergify queue tests on the latest main
-    # (https://docs.mergify.com/integrations/dependabot/).
+    # GitHub's merge queue tests on the latest main, so behind branches need no rebase
+    # (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#rebase-strategy--).
     rebase-strategy: disabled
   - package-ecosystem: pip
     directory: /
@@ -15,8 +15,8 @@ updates:
       interval: daily
     cooldown:
       default-days: 3
-    # The Mergify queue tests on the latest main
-    # (https://docs.mergify.com/integrations/dependabot/).
+    # GitHub's merge queue tests on the latest main, so behind branches need no rebase
+    # (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#rebase-strategy--).
     rebase-strategy: disabled
   - package-ecosystem: docker
     directory: /
@@ -24,6 +24,6 @@ updates:
       interval: daily
     cooldown:
       default-days: 3
-    # The Mergify queue tests on the latest main
-    # (https://docs.mergify.com/integrations/dependabot/).
+    # GitHub's merge queue tests on the latest main, so behind branches need no rebase
+    # (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#rebase-strategy--).
     rebase-strategy: disabled
