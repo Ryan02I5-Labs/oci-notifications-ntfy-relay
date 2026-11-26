@@ -1,8 +1,12 @@
 version: 2
-# One PR per ecosystem: actions released together (for example the
-# github/codeql-action init, analyze and upload-sarif sub-actions) and the
-# Python dependencies of the function move as one reviewable update instead of
-# one PR each. The base image stays on its own; it changes the runtime.
+# One PR per ecosystem for minor and patch updates: actions released together
+# (for example the github/codeql-action init, analyze and upload-sarif
+# sub-actions) and the Python dependencies of the function move as one update
+# instead of one PR each. Major updates stay individual PRs ("Any outdated
+# dependencies that do not match a rule are updated in individual pull
+# requests"), so the merge-queue workflow can leave them to a maintainer
+# (https://docs.github.com/en/code-security/tutorials/secure-your-dependencies/optimizing-pr-creation-version-updates).
+# The base image stays on its own; it changes the runtime.
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -17,6 +21,9 @@ updates:
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -30,6 +37,9 @@ updates:
       python:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: docker
     directory: /
     schedule:

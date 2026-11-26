@@ -1,0 +1,58 @@
+name: Dependabot merge queue
+
+# Puts Dependabot's patch and minor update pull requests into the merge queue without a
+# maintainer, following GitHub's documented pattern
+# (https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions):
+# dependabot/fetch-metadata reads the update type, then `gh pr merge --auto` turns on auto-merge,
+# and GitHub adds the pull request to the merge queue once the required checks pass
+# (https://cli.github.com/manual/gh_pr_merge). The queue still runs the required checks on the
+# latest main before anything merges; a merge does not publish a release (release.yml needs the
+# `release` environment's approval).
+#
+# The built-in GITHUB_TOKEN "cannot add pull requests to the queue", so the command uses an
+# installation token of a GitHub App installed on this repository only. Its private key is a
+# Dependabot secret, the only kind of secret a Dependabot-triggered workflow can read
+# (https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions).
+# No pull request code is checked out or run here.
+#
+# Major updates arrive as their own pull requests (dependabot.yml groups only minor and patch) and
+# the Docker base image changes the runtime, so both are left to a maintainer.
+
+on: pull_request
+
+permissions: {}
+
+jobs:
+  enqueue:
+    name: Enqueue patch and minor updates
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'Ryan02I5-Labs/oci-notifications-ntfy-relay'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Create an installation token
+        id: token
+        if: >-
+          steps.metadata.outputs.package-ecosystem != 'docker' &&
+          contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.metadata.outputs.update-type)
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: Iv23liUGx7EbKZPJ4oqc
+          private-key: ${{ secrets.MERGE_QUEUE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-merge-queues: write
+
+      - name: Turn on auto-merge so the pull request joins the merge queue
+        if: steps.token.outcome == 'success'
+        run: gh pr merge --auto "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
