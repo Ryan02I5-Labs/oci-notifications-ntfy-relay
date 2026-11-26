@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+  # GitHub's merge queue runs the required checks on its temporary branch
+  # (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue).
+  merge_group:
   push:
     branches:
       - main

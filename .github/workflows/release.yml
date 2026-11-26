@@ -43,6 +43,10 @@ jobs:
   publish:
     name: Publish image to GHCR
     needs: test
+    # The `release` environment requires a maintainer's approval and only accepts
+    # `v*` tags, so publishing waits for an explicit go
+    # (https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
