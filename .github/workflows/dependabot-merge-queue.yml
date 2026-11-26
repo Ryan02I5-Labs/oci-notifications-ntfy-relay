@@ -49,6 +49,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-merge-queues: write
+          # GitHub refuses auto-merge for a pull request that changes .github/workflows/ (every
+          # github-actions update does) unless the App token has the `workflows` permission; the error
+          # comes from the API (https://github.com/cli/cli/issues/11493).
+          permission-workflows: write
 
       - name: Turn on auto-merge so the pull request joins the merge queue
         if: steps.token.outcome == 'success'
